@@ -755,7 +755,7 @@ function UploadPanel({
           <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
             {uploading
               ? '완료된 문서부터 프로젝트에 저장됩니다. 이 창을 닫지 않으면 전체 진행 상황을 계속 확인할 수 있습니다.'
-              : 'DOC·DOCX 파일을 최대 200개까지 한 번에 끌어놓거나 선택하세요. 파일별 25MB, 작업 전체 250MB까지 지원합니다.'}
+              : 'DOC·DOCX 파일을 최대 200개까지 한 번에 끌어놓거나 선택하세요. DOC 파일은 분석 서버가 실행 중인 Windows PC의 Microsoft Word로 DOCX 변환 후 분석합니다.'}
           </p>
           {!uploading && <span className={cn(buttonVariants({ variant: 'default' }), 'mt-6')}><Plus />문서 선택</span>}
         </button>
@@ -774,7 +774,7 @@ function UploadPanel({
         )}
 
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-          <span>지원 형식: DOC, DOCX</span>
+          <span>지원 형식: DOCX 권장 · DOC는 Word 변환 필요</span>
           <span className="flex items-center gap-2">
             KCS {config?.kcs_available ? `${config.kcs_usable_document_count ?? config.kcs_document_count ?? 0}건 검색 가능${config.kcs_unavailable_document_count ? ` · 본문 제외 ${config.kcs_unavailable_document_count}건` : ''} · ${snapshotDate(config.kcs_snapshot)}` : '데이터 연결 확인 필요'}
             <Badge variant="outline">{config?.openai_available ? 'GPT 설정됨' : '로컬 매칭'}</Badge>

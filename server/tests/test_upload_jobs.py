@@ -17,6 +17,24 @@ SNAPSHOT = "2026-09-05T00:00:00+09:00"
 REVISION = "upload-revision-a"
 
 
+def test_upload_endpoint_allows_public_vercel_beta_origin(tmp_path, monkeypatch):
+    test_settings = _settings(tmp_path)
+    monkeypatch.setattr(app_module, "settings", test_settings)
+    monkeypatch.setattr(app_module, "store", Store(test_settings.database_path))
+
+    with TestClient(app_module.app) as client:
+        response = client.options(
+            "/api/upload-jobs",
+            headers={
+                "Origin": "https://poscoconstruction.vercel.app",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://poscoconstruction.vercel.app"
+
+
 def _settings(tmp_path: Path) -> Settings:
     data_dir = tmp_path / "data"
     kcs_dir = tmp_path / "kcs"
