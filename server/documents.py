@@ -78,6 +78,11 @@ LABEL_RE = re.compile(
 )
 SENTENCE_END_RE = re.compile(r"(?:다|함|됨|한다|된다|있다|없다)[.]?$|[.!?。]$")
 TOC_PAGE_LOCATOR_RE = re.compile(r"(?:\t+|[.·ㆍ…]{2,})\s*\d+\s*$")
+REQUIREMENT_SIGNAL_RE = re.compile(
+    r"(?:하여야|해야|한다|된다|따른다|없어야|있어야|금지|허용|"
+    r"이상|이하|초과|미만|이내|이후|이전|까지|마다|"
+    r"사용한다|설치한다|시공한다|확인한다|검사한다|측정한다)"
+)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -274,6 +279,15 @@ def _title_and_content(text: str, is_heading: bool) -> tuple[str, str]:
     if len(text) > 90:
         title += "…"
     return title, text
+
+
+def _looks_like_numbered_heading(label: str, body: str) -> bool:
+    """Detect short numbered section names without hiding actual requirements."""
+    if not label or not body or len(body) > 50:
+        return False
+    if SENTENCE_END_RE.search(body) or REQUIREMENT_SIGNAL_RE.search(body):
+        return False
+    return bool(re.search(r"[가-힣A-Za-z]", body))
 
 
 def _normalise_toc_text(value: str) -> str:
@@ -626,7 +640,12 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
                 and len(body) <= 90
                 and not SENTENCE_END_RE.search(body)
             )
-            title, content = _title_and_content(body, outline_level is not None or is_top_heading)
+            is_heading = (
+                outline_level is not None
+                or is_top_heading
+                or (bool(detected_label) and _looks_like_numbered_heading(label, body))
+            )
+            title, content = _title_and_content(body, is_heading)
             match_context = (
                 _section_context(label, parent_context, section_titles)
                 if detected_label
@@ -641,7 +660,7 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
                     "label": label,
                     "title": title,
                     "content": content,
-                    "source_type": "heading" if is_top_heading else "paragraph",
+                    "source_type": "heading" if is_heading else "paragraph",
                     "outline_level": outline_level,
                     "match_context": match_context,
                 }

@@ -4742,7 +4742,7 @@ class Store:
                            c.source_type, c.outline_level, c.decision,
                            c.edited_content, c.review_note, c.decision_reason,
                            c.coverage_confirmed, c.selected_candidate_id,
-                           c.reviewed_at
+                           c.reviewed_at, c.match_context
                     FROM clauses c
                     WHERE {where_clause}
                 ),
@@ -4771,10 +4771,55 @@ class Store:
                 item["coverage_confirmed"] = bool(item["coverage_confirmed"])
                 item["candidates"] = []
                 item["excluded_candidate_count"] = 0
+                item["source_context"] = {
+                    "path": str(item.pop("match_context") or "").strip(),
+                    "previous": None,
+                    "next": None,
+                }
                 items.append(item)
 
             if items:
                 placeholders = ",".join("?" for _ in items)
+                context_rows = connection.execute(
+                    f"""
+                    WITH ordered AS (
+                        SELECT id,
+                               LAG(source_order) OVER (ORDER BY source_order) AS previous_source_order,
+                               LAG(label) OVER (ORDER BY source_order) AS previous_label,
+                               LAG(title) OVER (ORDER BY source_order) AS previous_title,
+                               LAG(content) OVER (ORDER BY source_order) AS previous_content,
+                               LAG(source_type) OVER (ORDER BY source_order) AS previous_source_type,
+                               LEAD(source_order) OVER (ORDER BY source_order) AS next_source_order,
+                               LEAD(label) OVER (ORDER BY source_order) AS next_label,
+                               LEAD(title) OVER (ORDER BY source_order) AS next_title,
+                               LEAD(content) OVER (ORDER BY source_order) AS next_content,
+                               LEAD(source_type) OVER (ORDER BY source_order) AS next_source_type
+                        FROM clauses
+                        WHERE project_id = ?
+                    )
+                    SELECT * FROM ordered WHERE id IN ({placeholders})
+                    """,
+                    (project_id, *(item["id"] for item in items)),
+                ).fetchall()
+                items_by_id = {item["id"]: item for item in items}
+                for row in context_rows:
+                    target = items_by_id[row["id"]]["source_context"]
+                    if row["previous_source_order"] is not None:
+                        target["previous"] = {
+                            "source_order": row["previous_source_order"],
+                            "label": row["previous_label"],
+                            "title": row["previous_title"],
+                            "content": row["previous_content"],
+                            "source_type": row["previous_source_type"],
+                        }
+                    if row["next_source_order"] is not None:
+                        target["next"] = {
+                            "source_order": row["next_source_order"],
+                            "label": row["next_label"],
+                            "title": row["next_title"],
+                            "content": row["next_content"],
+                            "source_type": row["next_source_type"],
+                        }
                 candidate_rows = connection.execute(
                     f"""
                     SELECT k.*, ai.relation_type, ai.confidence, ai.rationale,
@@ -4787,7 +4832,6 @@ class Store:
                     tuple(item["id"] for item in items),
                 ).fetchall()
                 by_clause = {item["id"]: item["candidates"] for item in items}
-                items_by_id = {item["id"]: item for item in items}
                 for row in candidate_rows:
                     candidates = by_clause[row["clause_id"]]
                     if row["relation_type"] == "unrelated" and float(row["confidence"] or 0) >= 0.85:

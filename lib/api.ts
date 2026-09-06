@@ -434,6 +434,20 @@ export interface ClauseStructurePayload extends ProjectPayload {
 
 export type BulkReviewStatus = 'all' | 'kcs_impact' | 'unreviewed' | 'keep' | 'delete' | 'hold';
 
+export interface SourceContextItem {
+  source_order: number;
+  label: string;
+  title: string;
+  content: string;
+  source_type: 'paragraph' | 'table' | 'heading';
+}
+
+export interface SourceContext {
+  path: string;
+  previous: SourceContextItem | null;
+  next: SourceContextItem | null;
+}
+
 export interface BulkReviewItem {
   id: string;
   source_order: number;
@@ -451,6 +465,7 @@ export interface BulkReviewItem {
   reviewed_at: string | null;
   excluded_candidate_count: number;
   candidates: Candidate[];
+  source_context: SourceContext;
   kcs_impact?: ClauseKcsImpact | null;
 }
 

@@ -156,6 +156,10 @@ def test_bulk_review_paginates_in_source_order_and_batches_candidates(
     assert payload["has_more"] is True
     assert [item["id"] for item in payload["items"]] == ["heading", "unreviewed-match"]
     assert payload["items"][0]["source_type"] == "heading"
+    assert payload["items"][0]["source_context"]["previous"] is None
+    assert payload["items"][0]["source_context"]["next"]["label"] == "1.1"
+    assert payload["items"][1]["source_context"]["previous"]["label"] == "1"
+    assert payload["items"][1]["source_context"]["next"]["label"] == "2.1"
     assert payload["items"][0]["excluded_candidate_count"] == 0
     assert payload["items"][1]["excluded_candidate_count"] == 1
     candidates = payload["items"][1]["candidates"]
@@ -271,6 +275,7 @@ def test_bulk_review_returns_404_without_private_project_fields(bulk_client):
             "reviewed_at",
             "candidates",
             "excluded_candidate_count",
+            "source_context",
         }
         for item in response.json()["items"]
     )

@@ -42,6 +42,7 @@ import {
   Decision,
   isDecisionReason,
   Project,
+  SourceContextItem,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -84,6 +85,22 @@ function scoreBadgeTone(score: number) {
   if (score >= 0.45) return 'border-emerald-500/45 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200';
   if (score >= 0.35) return 'border-amber-500/45 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200';
   return 'border-orange-500/45 bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200';
+}
+
+function sourceText(item: Pick<SourceContextItem, 'title' | 'content'>) {
+  const title = item.title.trim();
+  const content = item.content.trim();
+  if (!content || content === title) return title;
+  return `${title}\n${content}`;
+}
+
+function ContextLine({ item, direction }: { item: SourceContextItem; direction: '이전' | '다음' }) {
+  return (
+    <div className="rounded-md border border-border/70 bg-background/55 px-3 py-2 text-xs text-muted-foreground">
+      <p className="mb-1 font-medium text-foreground/70">{direction} 원문 · {item.label}</p>
+      <p className="line-clamp-2 whitespace-pre-wrap leading-5">{sourceText(item)}</p>
+    </div>
+  );
 }
 
 function CandidateCard({
@@ -513,7 +530,7 @@ export function BulkReview({
           {refreshing && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Spinner />최신 변경 반영 중</span>}
         </div>
         <div className="mt-3 hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.7fr)_220px] gap-3 border-t border-border pt-2 text-xs font-medium text-muted-foreground xl:grid">
-          <span>포스코 원문</span><span>KCS 후보 · 최대 3개</span><span>담당자 판정</span>
+          <span>포스코 원문 · 앞뒤 문맥</span><span>KCS 후보 · 최대 3개</span><span>담당자 판정</span>
         </div>
       </div>
 
@@ -584,8 +601,21 @@ export function BulkReview({
 
                 <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.7fr)_220px]">
                   <section className="min-w-0 rounded-lg bg-muted/45 p-4">
-                    <p className="mb-2 text-xs font-medium text-muted-foreground xl:hidden">포스코 원문</p>
-                    <p className={cn('whitespace-pre-wrap text-sm leading-7', !expanded && 'line-clamp-6')}>{item.content || item.title}</p>
+                    <p className="mb-2 text-xs font-medium text-muted-foreground xl:hidden">포스코 원문 · 앞뒤 문맥</p>
+                    {item.source_context.path && (
+                      <p className="mb-2 text-xs font-medium leading-5 text-primary/80">{item.source_context.path}</p>
+                    )}
+                    {item.source_context.previous && <ContextLine item={item.source_context.previous} direction="이전" />}
+                    <div className="my-2 rounded-lg border-l-4 border-primary bg-background px-3 py-3 shadow-xs">
+                      <p className="mb-1 text-xs font-semibold text-primary">현재 검토 원문 · {item.label}</p>
+                      <p className={cn('whitespace-pre-wrap text-sm leading-7', !expanded && 'line-clamp-8')}>{sourceText(item)}</p>
+                      {!item.content.trim() && item.source_type !== 'heading' && (
+                        <p className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                          원본에서 이 한 줄만 독립 번호 항목으로 인식되었습니다. 소제목이라면 앞뒤 문맥을 확인하세요.
+                        </p>
+                      )}
+                    </div>
+                    {item.source_context.next && <ContextLine item={item.source_context.next} direction="다음" />}
                   </section>
 
                   <section className="min-w-0">

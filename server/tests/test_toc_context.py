@@ -198,6 +198,26 @@ def test_short_numeric_noun_heading_stays_heading_without_continuation():
     assert clauses[0]["title"] == "제품운반 및 현장야적"
 
 
+def test_nested_short_titles_are_context_only_but_requirements_stay_reviewable():
+    document = Document()
+    document.add_paragraph("2.1 무석면 바닥타일 붙이기")
+    document.add_paragraph("(1) 붙이기")
+    document.add_paragraph("(2) 접착제는 바탕면 전체에 도포하여야 한다.")
+    document.add_paragraph("(3) 응결시간은 10시간 이내")
+
+    _, clauses, _ = parse_docx(
+        _docx_bytes(document), "nested-headings.docx", str(uuid.uuid4())
+    )
+
+    assert [clause["source_type"] for clause in clauses] == [
+        "heading",
+        "heading",
+        "paragraph",
+        "paragraph",
+    ]
+    assert clauses[1]["match_context"].endswith("2.1 무석면 바닥타일 붙이기")
+
+
 def test_bare_integer_heading_accepts_conservative_one_character_toc_difference():
     document = Document()
     try:
