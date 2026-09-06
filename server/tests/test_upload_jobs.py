@@ -308,6 +308,22 @@ def _post_batch(client: TestClient, *names: str):
     )
 
 
+def test_upload_decodes_mime_encoded_korean_doc_filename(upload_api):
+    client, _store, settings, _controls = upload_api
+    encoded_filename = "=?utf-8?B?6rG07LaVX+ygnDE07J6lX+uwqeyImOqzteyCrF8yMDE3MTIuZG9j?="
+
+    response = client.post(
+        "/api/upload-jobs",
+        files=[("files", (encoded_filename, b"legacy-doc", "application/msword"))],
+    )
+
+    assert response.status_code == 202
+    item = response.json()["job"]["items"][0]
+    assert item["filename"].endswith("_201712.doc")
+    assert not item["filename"].startswith("=?")
+    assert list(settings.uploads_dir.glob(f"{item['project_id']}.doc"))
+
+
 def test_async_batch_isolated_failure_does_not_block_later_file(upload_api):
     client, store, settings, controls = upload_api
     controls["parse_fail"].add("bad.docx")

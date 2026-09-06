@@ -9,6 +9,7 @@ import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from email.header import decode_header, make_header
 from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import quote
@@ -121,6 +122,16 @@ def _cors_origins_from_env() -> list[str]:
     raw = os.getenv("SPEC_MANAGER_CORS_ORIGINS", "")
     configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
     return [*DEFAULT_CORS_ORIGINS, *configured]
+
+
+def _upload_filename(upload: UploadFile, fallback: str) -> str:
+    filename = upload.filename or fallback
+    if filename.startswith("=?") and "?=" in filename:
+        try:
+            return str(make_header(decode_header(filename)))
+        except (LookupError, UnicodeDecodeError, ValueError):
+            return filename
+    return filename
 
 
 app.add_middleware(
@@ -1008,7 +1019,7 @@ def list_projects(
 
 @app.post("/api/projects/upload", status_code=201)
 async def upload_project(file: UploadFile = File(...)):
-    filename = file.filename or "시방서.docx"
+    filename = _upload_filename(file, "시방서.docx")
     suffix = Path(filename).suffix.lower()
     if suffix not in {".doc", ".docx"}:
         raise HTTPException(status_code=400, detail=".doc 또는 .docx 파일만 지원합니다.")
@@ -1060,7 +1071,7 @@ async def create_upload_job(files: list[UploadFile] = File(...)):
     total_bytes = 0
     try:
         for position, upload in enumerate(files, start=1):
-            filename = upload.filename or f"시방서-{position}.docx"
+            filename = _upload_filename(upload, f"시방서-{position}.docx")
             suffix = Path(filename).suffix.lower()
             if suffix not in {".doc", ".docx"}:
                 raise HTTPException(
