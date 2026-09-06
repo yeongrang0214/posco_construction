@@ -477,6 +477,16 @@ export interface BulkReviewPayload {
   has_more: boolean;
 }
 
+export interface DocumentMapItem {
+  id: string;
+  source_order: number;
+  label: string;
+  title: string;
+  content: string;
+  source_type: 'paragraph' | 'table' | 'heading';
+  decision: Decision;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
@@ -551,6 +561,10 @@ export const api = {
     return request<ProjectCatalogPage>(`/api/projects${query ? `?${query}` : ''}`);
   },
   project: (projectId: string) => request<ProjectPayload>(`/api/projects/${projectId}`),
+  documentMap: (projectId: string) =>
+    request<{ items: DocumentMapItem[] }>(`/api/projects/${projectId}/document-map`),
+  projectSourceDocxUrl: (projectId: string) =>
+    `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/source.docx`,
   clause: (projectId: string, clauseId: string) =>
     request<{ clause: ClauseDetail }>(`/api/projects/${projectId}/clauses/${clauseId}`),
   quickReviewClause: (

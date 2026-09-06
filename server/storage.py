@@ -4685,6 +4685,21 @@ class Store:
             self._attach_clause_kcs_impacts(connection, result, full=False)
             return result
 
+    def document_map(self, project_id: str) -> list[dict[str, Any]]:
+        """Return only the source fields needed to link the rendered DOCX to clauses."""
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, source_order, label, title, content, source_type,
+                       decision
+                FROM clauses
+                WHERE project_id = ?
+                ORDER BY source_order
+                """,
+                (project_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def bulk_review(
         self,
         project_id: str,
@@ -5267,7 +5282,8 @@ class Store:
         if selected_candidate_id:
             selected_candidate = connection.execute(
                 """
-                SELECT k.warnings_json, ai.relation_type, ai.confidence
+                SELECT k.title, k.content, k.warnings_json,
+                       ai.relation_type, ai.confidence
                 FROM candidates k
                 LEFT JOIN candidate_ai_analysis ai ON ai.candidate_id = k.id
                 WHERE k.id = ? AND k.clause_id = ?
@@ -5285,6 +5301,10 @@ class Store:
         if decision == "delete":
             if not selected_candidate:
                 raise ValueError("삭제하려면 전체 요구사항을 포함하는 KCS 근거를 먼저 선택해 주세요.")
+            candidate_title = " ".join(str(selected_candidate["title"] or "").split())
+            candidate_content = " ".join(str(selected_candidate["content"] or "").split())
+            if not candidate_content or candidate_content == candidate_title:
+                raise ValueError("제목만 있는 KCS 후보는 삭제 근거로 사용할 수 없습니다.")
             if not coverage_confirmed:
                 raise ValueError("삭제 전 포스코 요구사항 전체가 KCS에 포함되는지 확인해 주세요.")
             try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -279,6 +280,85 @@ def test_bulk_review_returns_404_without_private_project_fields(bulk_client):
         }
         for item in response.json()["items"]
     )
+
+
+def test_document_map_returns_source_linking_fields_without_private_paths(bulk_client):
+    client, _, project_id = bulk_client
+
+    response = client.get(f"/api/projects/{project_id}/document-map")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [item["id"] for item in items] == [
+        "heading",
+        "unreviewed-match",
+        "keep-clause",
+        "delete-clause",
+        "hold-clause",
+        "search-clause",
+    ]
+    assert set(items[0]) == {
+        "id", "source_order", "label", "title", "content", "source_type", "decision"
+    }
+    assert "source_path" not in response.text
+
+
+def test_source_docx_endpoint_serves_only_files_inside_upload_root(bulk_client, tmp_path, monkeypatch):
+    client, test_store, project_id = bulk_client
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    source = upload_root / f"{project_id}.docx"
+    source.write_bytes(b"preview-docx")
+    with test_store.connect() as connection:
+        connection.execute(
+            "UPDATE projects SET source_path = ? WHERE id = ?",
+            (str(source), project_id),
+        )
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, uploads_dir=upload_root))
+
+    response = client.get(f"/api/projects/{project_id}/source.docx")
+
+    assert response.status_code == 200
+    assert response.content == b"preview-docx"
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert response.headers["cache-control"] == "private, no-store"
+
+    outside = tmp_path / "outside.docx"
+    outside.write_bytes(b"secret")
+    with test_store.connect() as connection:
+        connection.execute(
+            "UPDATE projects SET source_path = ? WHERE id = ?",
+            (str(outside), project_id),
+        )
+    blocked = client.get(f"/api/projects/{project_id}/source.docx")
+    assert blocked.status_code == 404
+    assert "outside" not in blocked.text
+
+
+def test_title_only_candidate_cannot_be_used_as_delete_evidence(bulk_client):
+    _, test_store, project_id = bulk_client
+    with test_store.connect() as connection:
+        connection.execute(
+            """
+            UPDATE candidates
+            SET content = title, warnings_json = '[]'
+            WHERE id = 'delete-clause-candidate-1'
+            """
+        )
+
+    with pytest.raises(ValueError, match="제목만 있는 KCS 후보"):
+        test_store.update_decision(
+            project_id,
+            "delete-clause",
+            "delete",
+            "",
+            "삭제",
+            "delete-clause-candidate-1",
+            decision_reason="fully_covered_by_kcs",
+            coverage_confirmed=True,
+        )
 
 
 def test_quick_review_merges_only_fields_actually_sent(bulk_client):

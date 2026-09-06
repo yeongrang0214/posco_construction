@@ -1,8 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -16,6 +18,8 @@ import {
   Scissors,
   Trash2,
 } from 'lucide-react';
+
+import { DocxSourceViewer } from '@/components/docx-source-viewer';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -40,6 +44,7 @@ import {
   ClauseDetail,
   DECISION_REASON_OPTIONS,
   Decision,
+  DocumentMapItem,
   isDecisionReason,
   Project,
   SourceContextItem,
@@ -116,23 +121,25 @@ function CandidateCard({
   disabled: boolean;
   onSelect: () => void;
 }) {
+  const titleOnly = candidate.content.trim() === candidate.title.trim() || !candidate.content.trim();
   return (
     <button
       type="button"
       className={cn(
-        'min-w-0 rounded-lg border p-3 text-left transition-shadow hover:shadow-sm disabled:cursor-wait disabled:opacity-65',
+        'min-w-0 rounded-lg border p-3 text-left transition-shadow hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-55',
         scoreTone(candidate.score),
         selected && 'ring-2 ring-primary ring-offset-2 ring-offset-card',
       )}
       onClick={onSelect}
       disabled={disabled}
       aria-pressed={selected}
-      title="이 후보를 판정 근거로 선택하고 저장"
+      title={titleOnly ? '제목만 있는 후보는 삭제 근거로 선택할 수 없습니다.' : '이 후보를 판정 근거로 선택하고 저장'}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 text-xs font-semibold leading-5">후보 {candidate.rank} · {candidate.kcs_code} · {candidate.kcs_clause || '본문'}</span>
         <Badge variant="outline" className={cn('shrink-0 tabular-nums', scoreBadgeTone(candidate.score))}>{Math.round(candidate.score * 100)}%</Badge>
       </div>
+      <Badge variant="outline" className="mt-2 text-[10px]">{titleOnly ? '제목 후보' : '본문 후보'}</Badge>
       <p className="mt-1 line-clamp-2 text-xs opacity-75">
         {candidate.document_name} · {candidate.version || candidate.update_date || '버전 확인 필요'}
       </p>
@@ -140,10 +147,32 @@ function CandidateCard({
       <p className={cn('mt-1 whitespace-pre-wrap text-sm leading-6 opacity-90', !expanded && 'line-clamp-4')}>{candidate.content}</p>
       <span className="mt-2 flex items-center gap-1 text-xs font-medium">
         {selected ? <Check className="size-3.5" /> : <Circle className="size-3.5" />}
-        {selected ? '선택됨' : '근거로 선택'}
+        {titleOnly ? '삭제 근거 선택 불가' : selected ? '선택됨' : '근거로 선택'}
       </span>
     </button>
   );
+}
+
+function candidateIsTitleOnly(candidate: Candidate) {
+  return !candidate.content.trim() || candidate.content.trim() === candidate.title.trim();
+}
+
+function differenceTokens(text: string, counterpart: string, tone: 'source' | 'kcs') {
+  const parts = text.split(/(\s+)/g).filter(Boolean);
+  const counterpartWords = new Set(counterpart.toLocaleLowerCase('ko-KR').match(/[가-힣A-Za-z0-9.%℃°/-]+/g) || []);
+  const sourceNumbers = new Set(text.match(/\d+(?:[.,]\d+)?\s*(?:%|mm|cm|m|kg|MPa|℃|도)?/gi) || []);
+  const otherNumbers = new Set(counterpart.match(/\d+(?:[.,]\d+)?\s*(?:%|mm|cm|m|kg|MPa|℃|도)?/gi) || []);
+  return parts.map((part, index) => {
+    const normalized = part.toLocaleLowerCase('ko-KR').trim();
+    const numeric = /\d/.test(normalized) && (!otherNumbers.has(part.trim()) || sourceNumbers.size !== otherNumbers.size);
+    const unique = normalized.length >= 2 && !counterpartWords.has(normalized);
+    return (
+      <span
+        key={`${part}-${index}`}
+        className={numeric ? 'rounded bg-red-100 px-0.5 text-red-800' : unique ? tone === 'source' ? 'rounded bg-blue-100 px-0.5 text-blue-800' : 'rounded bg-emerald-100 px-0.5 text-emerald-800' : undefined}
+      >{part}</span>
+    );
+  });
 }
 
 export function BulkReview({
@@ -169,6 +198,7 @@ export function BulkReview({
   reviewLocked: boolean;
   kcsImpactFilterKey: number;
 }) {
+  'use no memo';
   const [items, setItems] = useState<BulkReviewItem[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -184,16 +214,33 @@ export function BulkReview({
   const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
-  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [documentMap, setDocumentMap] = useState<DocumentMapItem[]>([]);
+  const [activeClauseId, setActiveClauseId] = useState<string | null>(null);
+  const [selectingClause, setSelectingClause] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const requestGeneration = useRef(0);
   const loadingMoreGenerationRef = useRef<number | null>(null);
   const refreshingGenerationRef = useRef<number | null>(null);
   const appliedRefreshKeyRef = useRef(refreshKey);
   const appliedKcsImpactFilterKeyRef = useRef(kcsImpactFilterKey);
-  const savingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
+
+  useEffect(() => {
+    let active = true;
+    api.documentMap(projectId)
+      .then((result) => {
+        if (!active) return;
+        setDocumentMap(result.items);
+        setActiveClauseId((current) => current && result.items.some((item) => item.id === current)
+          ? current
+          : result.items.find((item) => item.source_type !== 'heading')?.id || result.items[0]?.id || null);
+      })
+      .catch((cause: Error) => {
+        if (active) setLoadError(cause.message);
+      });
+    return () => { active = false; };
+  }, [projectId, refreshKey]);
 
   useEffect(() => {
     let active = true;
@@ -205,6 +252,9 @@ export function BulkReview({
         setTotal(Number(result.total || 0));
         setHasMore(Boolean(result.has_more));
         setLoadError('');
+        setActiveClauseId((current) => current && result.items.some((item) => item.id === current)
+          ? current
+          : result.items.find((item) => item.source_type !== 'heading')?.id || result.items[0]?.id || current);
       })
       .catch((cause: Error) => {
         if (!active || generation !== requestGeneration.current) return;
@@ -217,7 +267,7 @@ export function BulkReview({
         if (active && generation === requestGeneration.current) setLoading(false);
       });
     return () => { active = false; };
-  }, [projectId, query, refreshVersion, status]);
+  }, [projectId, query, status]);
 
   useEffect(() => {
     if (appliedRefreshKeyRef.current === refreshKey) return;
@@ -293,7 +343,7 @@ export function BulkReview({
       || structureBusy
       || loadingMoreGenerationRef.current !== null
       || refreshingGenerationRef.current !== null
-      || savingRef.current.size > 0
+      || savingIds.size > 0
     ) return;
     const generation = requestGeneration.current;
     loadingMoreGenerationRef.current = generation;
@@ -323,7 +373,7 @@ export function BulkReview({
         setLoadingMore(false);
       }
     }
-  }, [hasMore, items.length, loading, projectId, query, status, structureBusy]);
+  }, [hasMore, items.length, loading, projectId, query, savingIds.size, status, structureBusy]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -379,12 +429,7 @@ export function BulkReview({
       acknowledge_kcs_impact?: boolean;
     },
   ): Promise<boolean> {
-    if (
-      structureBusy || savingRef.current.size > 0
-      || loadingMoreGenerationRef.current !== null
-      || refreshingGenerationRef.current !== null
-    ) return false;
-    savingRef.current.add(item.id);
+    if (structureBusy || savingIds.size > 0 || loadingMore || refreshing) return false;
     onBusyChange(true);
     setSavingIds((current) => new Set(current).add(item.id));
     setRowErrors((current) => {
@@ -392,31 +437,28 @@ export function BulkReview({
       delete next[item.id];
       return next;
     });
-    const listGeneration = requestGeneration.current;
     try {
       const result = await api.quickReviewClause(projectId, item.id, changes);
-      if (listGeneration === requestGeneration.current) {
-        const remainsInFilter = status === 'all'
-          || (status === 'kcs_impact'
-            ? needsKcsImpactReview(result.clause)
-            : status === 'unreviewed'
-              ? result.clause.decision === null
-              : result.clause.decision === status);
-        const updatedRow: BulkReviewItem = {
-          ...item,
-          ...result.clause,
-          excluded_candidate_count: result.clause.excluded_candidates?.length
-            ?? item.excluded_candidate_count,
-        };
-        setItems((current) => remainsInFilter
-          ? current.map((row) => row.id === result.clause.id ? updatedRow : row)
-          : current.filter((row) => row.id !== result.clause.id));
-        if (!remainsInFilter) setTotal((current) => Math.max(0, current - 1));
-      } else {
-        setLoading(true);
-        setRefreshVersion((current) => current + 1);
-      }
+      const remainsInFilter = status === 'all'
+        || (status === 'kcs_impact'
+          ? needsKcsImpactReview(result.clause)
+          : status === 'unreviewed'
+            ? result.clause.decision === null
+            : result.clause.decision === status);
+      const updatedRow: BulkReviewItem = {
+        ...item,
+        ...result.clause,
+        excluded_candidate_count: result.clause.excluded_candidates?.length
+          ?? item.excluded_candidate_count,
+      };
+      setItems((current) => remainsInFilter
+        ? current.map((row) => row.id === result.clause.id ? updatedRow : row)
+        : current.filter((row) => row.id !== result.clause.id));
+      if (!remainsInFilter) setTotal((current) => Math.max(0, current - 1));
       onSaved(result.clause, result.project);
+      setDocumentMap((current) => current.map((entry) => entry.id === result.clause.id
+        ? { ...entry, decision: result.clause.decision }
+        : entry));
       if (Object.prototype.hasOwnProperty.call(changes, 'decision_reason')) {
         setRowReasons((current) => {
           const next = { ...current };
@@ -432,7 +474,6 @@ export function BulkReview({
       }));
       return false;
     } finally {
-      savingRef.current.delete(item.id);
       onBusyChange(false);
       setSavingIds((current) => {
         const next = new Set(current);
@@ -496,8 +537,58 @@ export function BulkReview({
     setDeleteConfirmed(false);
   }
 
+  function selectCandidate(item: BulkReviewItem, candidateId: string) {
+    void saveRow(item, { selected_candidate_id: candidateId });
+  }
+
   const savingAny = savingIds.size > 0;
-  const interactionBusy = savingAny || loadingMore || refreshing || structureBusy;
+  const interactionBusy = savingAny || loadingMore || refreshing || structureBusy || selectingClause;
+  const activeItem = useMemo(
+    () => items.find((item) => item.id === activeClauseId) || items[0] || null,
+    [activeClauseId, items],
+  );
+  const activeMapIndex = useMemo(
+    () => documentMap.findIndex((item) => item.id === activeItem?.id),
+    [activeItem?.id, documentMap],
+  );
+
+  const selectClause = useCallback(async (clauseId: string) => {
+    if (clauseId === activeClauseId || selectingClause) return;
+    const loaded = items.find((item) => item.id === clauseId);
+    if (loaded) {
+      setActiveClauseId(clauseId);
+      return;
+    }
+    setSelectingClause(true);
+    try {
+      const result = await api.clause(projectId, clauseId);
+      const mapped: BulkReviewItem = {
+        ...result.clause,
+        excluded_candidate_count: result.clause.excluded_candidates?.length || 0,
+        source_context: { path: '', previous: null, next: null },
+      };
+      setItems((current) => current.some((item) => item.id === mapped.id) ? current : [...current, mapped]);
+      setActiveClauseId(clauseId);
+      setLoadError('');
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : '선택한 조항을 불러오지 못했습니다.');
+    } finally {
+      setSelectingClause(false);
+    }
+  }, [activeClauseId, items, projectId, selectingClause]);
+
+  function moveActive(direction: -1 | 1) {
+    if (activeMapIndex < 0) return;
+    let nextIndex = activeMapIndex + direction;
+    while (nextIndex >= 0 && nextIndex < documentMap.length) {
+      const next = documentMap[nextIndex];
+      if (next.source_type !== 'heading') {
+        void selectClause(next.id);
+        return;
+      }
+      nextIndex += direction;
+    }
+  }
 
   return (
     <section aria-label="시방서 일괄 검토">
@@ -549,7 +640,139 @@ export function BulkReview({
           <div><FileText className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="font-medium">조건에 맞는 조항이 없습니다</p><p className="mt-1 text-sm text-muted-foreground">검색어나 판정 상태를 바꿔보세요.</p></div>
         </div>
       ) : (
-        <div className="space-y-3">
+        <>
+          {activeItem && (() => {
+            const item = activeItem;
+            const candidates = (item.candidates || []).slice(0, 3);
+            const selectedCandidate = candidates.find((candidate) => candidate.id === item.selected_candidate_id) || null;
+            const saving = savingIds.has(item.id);
+            const impactNeedsReview = needsKcsImpactReview(item);
+            const impactProtected = kcsImpactIsProtected(item);
+            const rowDecisionBusy = interactionBusy || impactProtected || reviewLocked;
+            const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-xs">
+                  <Button size="sm" variant="outline" onClick={() => moveActive(-1)} disabled={rowDecisionBusy || activeMapIndex <= 0}><ArrowLeft />이전</Button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-semibold">{item.label} · {item.title}</p>
+                      {item.source_type === 'heading' && <Badge variant="outline">문맥용 제목</Badge>}
+                      {impactNeedsReview && <Badge variant="outline" className="border-amber-500/50 bg-amber-50 text-amber-900">KCS 재검토 필요</Badge>}
+                      {saving && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Spinner />저장 중</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground">원문 순서 {item.source_order} · DOCX의 노란 표시가 현재 검토 위치입니다.</p>
+                  </div>
+                  {item.source_type === 'paragraph' && <>
+                    {item.content.trim() && <Button size="sm" variant="outline" onClick={() => onSplit(item)} disabled={rowDecisionBusy}><Scissors />나누기</Button>}
+                    <Button size="sm" variant="outline" onClick={() => onMergeNext(item)} disabled={rowDecisionBusy}><Combine />다음과 합치기</Button>
+                  </>}
+                  <Button size="sm" variant="outline" onClick={() => onOpenDetail(item.id)} disabled={interactionBusy}><ExternalLink />상세 비교</Button>
+                  <Button size="sm" variant="outline" onClick={() => moveActive(1)} disabled={rowDecisionBusy || activeMapIndex < 0 || activeMapIndex >= documentMap.length - 1}>다음<ArrowRight /></Button>
+                </div>
+
+                {rowErrors[item.id] && <p role="alert" className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"><AlertTriangle className="mt-0.5 size-4 shrink-0" />{rowErrors[item.id]}</p>}
+
+                <div className="grid min-h-[620px] gap-3 xl:h-[calc(100vh-16.5rem)] xl:grid-cols-[minmax(480px,1.15fr)_minmax(420px,1fr)_220px]">
+                  <DocxSourceViewer
+                    projectId={projectId}
+                    clauses={documentMap}
+                    activeClauseId={item.id}
+                    onSelectClause={(clauseId) => void selectClause(clauseId)}
+                  />
+
+                  <section className="min-h-0 overflow-auto rounded-xl border border-border bg-card p-3 shadow-sm" aria-label="KCS 후보 비교">
+                    <div className="mb-3 flex items-start justify-between gap-2 border-b border-border pb-2">
+                      <div>
+                        <p className="text-sm font-semibold">KCS 후보 · 최대 3개</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">본문 후보를 선택하면 아래에 문장 차이가 표시됩니다.</p>
+                      </div>
+                      <Badge variant="outline">{candidates.length}개</Badge>
+                    </div>
+                    {item.source_type === 'heading' ? (
+                      <div className="rounded-lg border border-dashed border-border bg-muted/40 p-5 text-sm leading-6 text-muted-foreground">
+                        목차와 구조 제목은 매칭·판정하지 않고, 뒤에 이어지는 문구의 검색 문맥으로만 사용합니다.
+                      </div>
+                    ) : candidates.length ? (
+                      <div className="grid min-w-0 gap-2 2xl:grid-cols-3">
+                        {candidates.map((candidate) => {
+                          const titleOnly = candidateIsTitleOnly(candidate);
+                          return <CandidateCard
+                            key={candidate.id}
+                            candidate={candidate}
+                            selected={item.selected_candidate_id === candidate.id}
+                            expanded
+                            disabled={rowDecisionBusy || item.decision === 'delete' || titleOnly}
+                            onSelect={() => selectCandidate(item, candidate.id)}
+                          />;
+                        })}
+                      </div>
+                    ) : (
+                      <div className="grid min-h-36 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-4 text-center text-sm leading-6 text-muted-foreground">
+                        {item.excluded_candidate_count > 0
+                          ? `관련성 낮음으로 제외된 후보 ${item.excluded_candidate_count}개가 있습니다.`
+                          : '25% 이상인 KCS 본문 후보가 없습니다.'}
+                      </div>
+                    )}
+
+                    <div className="mt-3 rounded-xl border border-border bg-muted/25 p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
+                        <span className="font-semibold">문장 차이</span>
+                        <span><i className="mr-1 inline-block size-2.5 rounded-sm bg-blue-100" />포스코에만 있음</span>
+                        <span><i className="mr-1 inline-block size-2.5 rounded-sm bg-emerald-100" />KCS에만 있음</span>
+                        <span><i className="mr-1 inline-block size-2.5 rounded-sm bg-red-100" />수치·단위 확인</span>
+                      </div>
+                      {selectedCandidate ? (
+                        <div className="grid gap-2 text-sm leading-6">
+                          <div className="rounded-lg border border-blue-200 bg-background p-3">
+                            <p className="mb-1 text-xs font-semibold text-blue-800">포스코 원문</p>
+                            <p className="whitespace-pre-wrap">{differenceTokens(sourceText(item), `${selectedCandidate.title} ${selectedCandidate.content}`, 'source')}</p>
+                          </div>
+                          <div className="rounded-lg border border-emerald-200 bg-background p-3">
+                            <p className="mb-1 text-xs font-semibold text-emerald-800">선택 KCS</p>
+                            <p className="whitespace-pre-wrap">{differenceTokens(`${selectedCandidate.title}\n${selectedCandidate.content}`, sourceText(item), 'kcs')}</p>
+                          </div>
+                          {!!selectedCandidate.warnings?.length && <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-900"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{selectedCandidate.warnings.join(' · ')}</p>}
+                        </div>
+                      ) : <p className="py-6 text-center text-sm text-muted-foreground">KCS 본문 후보를 선택하면 차이를 표시합니다.</p>}
+                    </div>
+                  </section>
+
+                  <section className="min-w-0 overflow-auto rounded-xl border border-border bg-card p-3 shadow-sm" aria-label="담당자 판정">
+                    <p className="mb-3 border-b border-border pb-2 text-sm font-semibold">담당자 판정</p>
+                    {item.source_type === 'heading' ? (
+                      <div className="rounded-lg bg-muted/55 p-3 text-sm leading-6 text-muted-foreground"><Badge variant="outline" className="mb-2">판정 제외</Badge><p>뒤 조항의 문맥으로 유지됩니다.</p></div>
+                    ) : <>
+                      <label className="mb-3 block text-xs font-medium text-muted-foreground">
+                        판정 사유
+                        <select className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground" value={reason} onChange={(event) => chooseReason(item.id, event.target.value)} disabled={rowDecisionBusy}>
+                          <option value="">사유를 선택하세요</option>
+                          {(['keep', 'hold', 'delete'] as const).map((decision) => (
+                            <optgroup key={decision} label={decision === 'keep' ? '남김' : decision === 'hold' ? '보류' : '삭제'}>
+                              {DECISION_REASON_OPTIONS[decision].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="grid gap-2">
+                        <Button variant={item.decision === 'keep' ? 'default' : 'outline'} onClick={() => saveDecision(item, 'keep')} disabled={rowDecisionBusy}><CheckCircle2 />남김</Button>
+                        <Button variant={item.decision === 'delete' ? 'destructive' : 'outline'} onClick={() => requestDelete(item)} disabled={rowDecisionBusy}><Trash2 />삭제</Button>
+                        <Button variant={item.decision === 'hold' ? 'secondary' : 'outline'} onClick={() => saveDecision(item, 'hold')} disabled={rowDecisionBusy}><Clock3 />보류</Button>
+                      </div>
+                      <div className="mt-4 space-y-2 text-xs leading-5 text-muted-foreground">
+                        <p>삭제는 KCS 본문 후보 선택과 전체 포괄 확인이 있어야 저장됩니다.</p>
+                        <p>제목 후보는 위치 탐색용이며 삭제 근거로 사용할 수 없습니다.</p>
+                        {item.decision && <Badge variant="outline">현재 판정 · {item.decision === 'keep' ? '남김' : item.decision === 'delete' ? '삭제' : '보류'}</Badge>}
+                      </div>
+                    </>}
+                  </section>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div className="hidden">
+          <div className="space-y-3">
           {items.map((item) => {
             const expanded = expandedIds.has(item.id);
             const saving = savingIds.has(item.id);
@@ -694,7 +917,9 @@ export function BulkReview({
               </article>
             );
           })}
-        </div>
+          </div>
+          </div>
+        </>
       )}
 
       <div ref={sentinelRef} className="grid min-h-20 place-items-center" aria-live="polite">

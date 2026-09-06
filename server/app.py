@@ -1181,6 +1181,45 @@ def get_project(project_id: str):
     return {"project": _public_project(project), "clauses": store.list_clauses(project_id)}
 
 
+@app.get("/api/projects/{project_id}/document-map")
+def get_document_map(project_id: str):
+    _project_or_404(project_id)
+    return {"items": store.document_map(project_id)}
+
+
+@app.get("/api/projects/{project_id}/source.docx")
+def get_project_source_docx(project_id: str):
+    project = _project_or_404(project_id)
+    source_path = Path(str(project.get("source_path") or ""))
+    upload_root = settings.uploads_dir.resolve()
+    try:
+        resolved = source_path.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        raise HTTPException(status_code=404, detail="업로드 원본 파일을 찾을 수 없습니다.")
+    if resolved.parent != upload_root or resolved.suffix.lower() not in {".doc", ".docx"}:
+        raise HTTPException(status_code=404, detail="업로드 원본 파일을 찾을 수 없습니다.")
+
+    preview_path = resolved
+    if resolved.suffix.lower() == ".doc":
+        preview_path = resolved.with_suffix(".docx")
+        if not preview_path.exists():
+            try:
+                convert_legacy_doc(resolved, preview_path)
+            except (OSError, RuntimeError, ValueError) as exc:
+                preview_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"원문 미리보기를 위한 DOCX 변환에 실패했습니다: {exc}",
+                ) from exc
+    filename = f"{Path(str(project.get('source_filename') or 'source')).stem}.docx"
+    return FileResponse(
+        preview_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=filename,
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
 @app.get("/api/projects/{project_id}/review-workflow")
 def get_review_workflow(project_id: str):
     _project_or_404(project_id)

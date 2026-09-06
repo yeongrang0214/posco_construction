@@ -1,0 +1,219 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Crosshair, FileText, Minus, Plus } from 'lucide-react';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { api, DocumentMapItem } from '@/lib/api';
+
+const MARKER_CLASSES = [
+  'spec-source-marker',
+  'spec-source-active',
+  'spec-source-keep',
+  'spec-source-delete',
+  'spec-source-hold',
+];
+
+function normalized(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('ko-KR')
+    .replace(/[\s\u00a0]+/g, '')
+    .replace(/[·ㆍ:：;；,，.。()[\]{}「」『』〈〉《》<>\-–—]/g, '');
+}
+
+function matchScore(target: string, rendered: string) {
+  if (!target || !rendered) return 0;
+  if (target === rendered) return 1;
+  if (rendered.includes(target)) return 0.82 + Math.min(0.16, target.length / rendered.length / 6);
+  if (target.includes(rendered) && rendered.length >= 8) return 0.68 + Math.min(0.12, rendered.length / target.length / 6);
+  const targetChunks = new Set(target.match(/[가-힣A-Za-z0-9]{2,}/g) || []);
+  const renderedChunks = new Set(rendered.match(/[가-힣A-Za-z0-9]{2,}/g) || []);
+  if (!targetChunks.size || !renderedChunks.size) return 0;
+  const common = [...targetChunks].filter((chunk) => renderedChunks.has(chunk)).length;
+  return common / Math.max(targetChunks.size, renderedChunks.size);
+}
+
+function clauseSearchText(clause: DocumentMapItem) {
+  const content = clause.content.trim();
+  const title = clause.title.trim();
+  return normalized(content && content !== title ? `${title} ${content}` : title);
+}
+
+export function DocxSourceViewer({
+  projectId,
+  clauses,
+  activeClauseId,
+  onSelectClause,
+}: {
+  projectId: string;
+  clauses: DocumentMapItem[];
+  activeClauseId: string | null;
+  onSelectClause: (clauseId: string) => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const styleRef = useRef<HTMLDivElement>(null);
+  const elementMapRef = useRef<Map<string, HTMLElement[]>>(new Map());
+  const [zoom, setZoom] = useState(0.82);
+  const [pageCount, setPageCount] = useState(0);
+  const [activePage, setActivePage] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function renderSource() {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await fetch(api.projectSourceDocxUrl(projectId));
+        if (!response.ok) {
+          let message = `원문을 불러오지 못했습니다. (${response.status})`;
+          try {
+            const payload = await response.json() as { detail?: string };
+            if (payload.detail) message = payload.detail;
+          } catch {
+            // Keep the status-based message for non-JSON responses.
+          }
+          throw new Error(message);
+        }
+        const blob = await response.blob();
+        const { renderAsync } = await import('docx-preview');
+        if (cancelled || !bodyRef.current) return;
+        bodyRef.current.replaceChildren();
+        if (styleRef.current) styleRef.current.replaceChildren();
+        await renderAsync(blob, bodyRef.current, styleRef.current || undefined, {
+          breakPages: true,
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          experimental: true,
+        });
+        if (cancelled || !bodyRef.current) return;
+        setPageCount(bodyRef.current.querySelectorAll('section.docx').length || 1);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : 'DOCX 원문을 표시하지 못했습니다.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void renderSource();
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || loading || error) return;
+    const candidates = Array.from(body.querySelectorAll<HTMLElement>('p, tr'))
+      .filter((element) => !(element.tagName === 'P' && element.closest('tr')))
+      .map((element) => ({ element, text: normalized(element.innerText || element.textContent || '') }))
+      .filter(({ text }) => text.length >= 2);
+    const nextMap = new Map<string, HTMLElement[]>();
+    for (const { element } of candidates) {
+      element.classList.remove(...MARKER_CLASSES);
+      delete element.dataset.clauseId;
+    }
+
+    for (const clause of clauses) {
+      if (clause.source_type === 'heading') continue;
+      const target = clauseSearchText(clause);
+      if (target.length < 2) continue;
+      let best: { element: HTMLElement; score: number } | null = null;
+      for (const candidate of candidates) {
+        if (clause.source_type === 'table' && candidate.element.tagName !== 'TR') continue;
+        if (clause.source_type !== 'table' && candidate.element.tagName === 'TR') continue;
+        const score = matchScore(target, candidate.text);
+        if (!best || score > best.score) best = { element: candidate.element, score };
+      }
+      if (!best || best.score < 0.56 || best.element.dataset.clauseId) continue;
+      best.element.dataset.clauseId = clause.id;
+      best.element.classList.add('spec-source-marker');
+      if (clause.decision) best.element.classList.add(`spec-source-${clause.decision}`);
+      if (clause.id === activeClauseId) best.element.classList.add('spec-source-active');
+      nextMap.set(clause.id, [best.element]);
+    }
+    elementMapRef.current = nextMap;
+  }, [activeClauseId, clauses, error, loading]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    body.querySelectorAll('.spec-source-active').forEach((element) => element.classList.remove('spec-source-active'));
+    if (!activeClauseId) return;
+    const elements = elementMapRef.current.get(activeClauseId) || [];
+    elements.forEach((element) => element.classList.add('spec-source-active'));
+    const page = elements[0]?.closest('section.docx');
+    const pages = Array.from(body.querySelectorAll('section.docx'));
+    const pageIndex = page ? pages.indexOf(page) : -1;
+    setActivePage(pageIndex >= 0 ? pageIndex + 1 : null);
+    elements[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeClauseId, clauses]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-clause-id]');
+      if (target?.dataset.clauseId) onSelectClause(target.dataset.clauseId);
+    };
+    body.addEventListener('click', handleClick);
+    return () => body.removeEventListener('click', handleClick);
+  }, [onSelectClause]);
+
+  const activeIndex = useMemo(
+    () => clauses.findIndex((clause) => clause.id === activeClauseId),
+    [activeClauseId, clauses],
+  );
+  return (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-label="포스코 DOCX 원문">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <div className="mr-auto flex min-w-0 items-center gap-2">
+          <FileText className="size-4 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">포스코 DOCX 원문</p>
+            <p className="text-[11px] text-muted-foreground">원문을 클릭하면 해당 KCS 비교로 이동합니다.</p>
+          </div>
+        </div>
+        <Badge variant="outline" className="tabular-nums">{activePage || '-'} / {pageCount || '-'}쪽</Badge>
+        <Button size="icon-sm" variant="outline" aria-label="원문 축소" onClick={() => setZoom((value) => Math.max(0.55, value - 0.1))}><Minus /></Button>
+        <span className="w-11 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
+        <Button size="icon-sm" variant="outline" aria-label="원문 확대" onClick={() => setZoom((value) => Math.min(1.3, value + 0.1))}><Plus /></Button>
+        <Button size="sm" variant="outline" onClick={() => {
+          if (!activeClauseId) return;
+          elementMapRef.current.get(activeClauseId)?.[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }}><Crosshair />현재 위치</Button>
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-border bg-muted/35 px-3 py-2 text-[11px] text-muted-foreground">
+        <span><i className="mr-1 inline-block size-2.5 rounded-sm bg-yellow-300" />현재 조항</span>
+        <span><i className="mr-1 inline-block h-2.5 w-1 rounded-sm bg-emerald-500" />남김</span>
+        <span><i className="mr-1 inline-block h-2.5 w-1 rounded-sm bg-red-500" />삭제</span>
+        <span><i className="mr-1 inline-block h-2.5 w-1 rounded-sm bg-amber-500" />보류</span>
+        {activeIndex >= 0 && <span className="ml-auto">원문 순서 {clauses[activeIndex].source_order}</span>}
+      </div>
+      <div ref={viewportRef} className="relative min-h-[520px] flex-1 overflow-auto bg-slate-200/75 p-3 dark:bg-slate-950/50">
+        {loading && <div className="absolute inset-0 z-10 grid place-items-center bg-background/75"><span className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner />DOCX 원문을 그리는 중입니다.</span></div>}
+        {error && <div className="m-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>}
+        <div ref={styleRef} />
+        <div className="docx-source-scale origin-top-left" style={{ zoom }}>
+          <div ref={bodyRef} />
+        </div>
+      </div>
+      <style>{`
+        .docx-source-scale .docx-wrapper { background: transparent !important; padding: 0 !important; }
+        .docx-source-scale section.docx { margin: 0 auto 18px !important; box-shadow: 0 4px 18px rgb(15 23 42 / 18%); }
+        .docx-source-scale .spec-source-marker { cursor: pointer; position: relative; border-left: 4px solid transparent !important; transition: background-color .15s, outline-color .15s; }
+        .docx-source-scale .spec-source-marker:hover { background: rgb(219 234 254 / 60%) !important; outline: 1px solid rgb(59 130 246 / 45%); }
+        .docx-source-scale .spec-source-keep { border-left-color: #10b981 !important; }
+        .docx-source-scale .spec-source-delete { border-left-color: #ef4444 !important; }
+        .docx-source-scale .spec-source-hold { border-left-color: #f59e0b !important; }
+        .docx-source-scale .spec-source-active { background: rgb(253 224 71 / 55%) !important; outline: 2px solid #0f4c81 !important; outline-offset: 2px; }
+      `}</style>
+    </section>
+  );
+}
