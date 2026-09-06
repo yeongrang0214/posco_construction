@@ -54,10 +54,12 @@ export function DocxSourceViewer({
   onSelectClause: (clauseId: string) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const scaleRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const styleRef = useRef<HTMLDivElement>(null);
   const elementMapRef = useRef<Map<string, HTMLElement[]>>(new Map());
   const [zoom, setZoom] = useState(0.82);
+  const [renderSize, setRenderSize] = useState({ width: 0, height: 0 });
   const [pageCount, setPageCount] = useState(0);
   const [activePage, setActivePage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,7 @@ export function DocxSourceViewer({
     async function renderSource() {
       setLoading(true);
       setError('');
+      setRenderSize({ width: 0, height: 0 });
       try {
         const response = await fetch(api.projectSourceDocxUrl(projectId));
         if (!response.ok) {
@@ -106,6 +109,40 @@ export function DocxSourceViewer({
     void renderSource();
     return () => { cancelled = true; };
   }, [projectId]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || loading || error) return;
+
+    let frame = 0;
+    const measure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const wrapper = body.querySelector<HTMLElement>('.docx-wrapper');
+        const pages = Array.from(body.querySelectorAll<HTMLElement>('section.docx'));
+        const width = Math.ceil(Math.max(0, ...pages.map((page) => page.offsetWidth), wrapper?.scrollWidth || 0));
+        const height = Math.ceil(wrapper?.scrollHeight || body.scrollHeight || 0);
+        if (width && height) {
+          setRenderSize((current) => current.width === width && current.height === height
+            ? current
+            : { width, height });
+        }
+      });
+    };
+
+    measure();
+    const observed = body.querySelector<HTMLElement>('.docx-wrapper') || body;
+    const observer = new ResizeObserver(measure);
+    observer.observe(observed);
+    const images = Array.from(body.querySelectorAll('img'));
+    images.forEach((image) => image.addEventListener('load', measure));
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      images.forEach((image) => image.removeEventListener('load', measure));
+    };
+  }, [error, loading, projectId]);
 
   useEffect(() => {
     const body = bodyRef.current;
@@ -200,18 +237,37 @@ export function DocxSourceViewer({
         {loading && <div className="absolute inset-0 z-10 grid place-items-center bg-background/75"><span className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner />DOCX 원문을 그리는 중입니다.</span></div>}
         {error && <div className="m-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>}
         <div ref={styleRef} />
-        <div className="docx-source-scale origin-top-left" style={{ zoom }}>
-          <div ref={bodyRef} />
+        <div
+          className="docx-source-stage relative mx-auto"
+          style={renderSize.width && renderSize.height ? {
+            width: renderSize.width * zoom,
+            height: renderSize.height * zoom,
+          } : undefined}
+        >
+          <div
+            ref={scaleRef}
+            className="docx-source-scale origin-top-left"
+            style={{ transform: `scale(${zoom})` }}
+          >
+            <div ref={bodyRef} />
+          </div>
         </div>
       </div>
       <style>{`
-        .docx-source-scale .docx-wrapper { background: transparent !important; padding: 0 !important; }
+        .docx-source-stage { min-width: 1px; min-height: 1px; }
+        .docx-source-scale { position: absolute; inset: 0 auto auto 0; width: max-content; transform-origin: top left; }
+        .docx-source-scale .docx-wrapper { background: transparent !important; padding: 0 !important; width: max-content !important; }
         .docx-source-scale section.docx { margin: 0 auto 18px !important; box-shadow: 0 4px 18px rgb(15 23 42 / 18%); }
-        .docx-source-scale .spec-source-marker { cursor: pointer; position: relative; border-left: 4px solid transparent !important; transition: background-color .15s, outline-color .15s; }
+        .docx-source-scale .spec-source-marker { cursor: pointer; position: relative; transition: background-color .15s, outline-color .15s; }
+        .docx-source-scale .spec-source-marker:not(tr) { border-left: 4px solid transparent !important; }
+        .docx-source-scale tr.spec-source-marker { box-shadow: inset 4px 0 transparent; }
         .docx-source-scale .spec-source-marker:hover { background: rgb(219 234 254 / 60%) !important; outline: 1px solid rgb(59 130 246 / 45%); }
-        .docx-source-scale .spec-source-keep { border-left-color: #10b981 !important; }
-        .docx-source-scale .spec-source-delete { border-left-color: #ef4444 !important; }
-        .docx-source-scale .spec-source-hold { border-left-color: #f59e0b !important; }
+        .docx-source-scale .spec-source-keep:not(tr) { border-left-color: #10b981 !important; }
+        .docx-source-scale .spec-source-delete:not(tr) { border-left-color: #ef4444 !important; }
+        .docx-source-scale .spec-source-hold:not(tr) { border-left-color: #f59e0b !important; }
+        .docx-source-scale tr.spec-source-keep { box-shadow: inset 4px 0 #10b981; }
+        .docx-source-scale tr.spec-source-delete { box-shadow: inset 4px 0 #ef4444; }
+        .docx-source-scale tr.spec-source-hold { box-shadow: inset 4px 0 #f59e0b; }
         .docx-source-scale .spec-source-active { background: rgb(253 224 71 / 55%) !important; outline: 2px solid #0f4c81 !important; outline-offset: 2px; }
       `}</style>
     </section>
