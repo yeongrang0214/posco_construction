@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "https://posco-spec-manager.yeongrangrang.chatgpt.site/$1"
+    }
+  ]
+}
