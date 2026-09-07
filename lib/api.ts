@@ -93,6 +93,8 @@ export interface KcsConfig {
   openai_embedding_model?: string;
   openai_embedding_dimensions?: number;
   openai_rerank_model?: string;
+  doc_upload_available?: boolean;
+  doc_conversion_engine?: 'libreoffice' | 'microsoft_word' | null;
   error?: string;
 }
 

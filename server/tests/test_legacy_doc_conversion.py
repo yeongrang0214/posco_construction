@@ -47,3 +47,21 @@ def test_linux_legacy_doc_conversion_requires_libreoffice(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="LibreOffice"):
         documents.convert_legacy_doc(source, output)
+
+
+def test_linux_legacy_doc_conversion_engine_reports_runtime(monkeypatch):
+    monkeypatch.setattr(documents, "IS_WINDOWS", False)
+    monkeypatch.setattr(
+        documents.shutil,
+        "which",
+        lambda name: "/usr/bin/libreoffice" if name == "libreoffice" else None,
+    )
+
+    assert documents.legacy_doc_conversion_engine() == "libreoffice"
+
+
+def test_linux_legacy_doc_conversion_engine_reports_missing(monkeypatch):
+    monkeypatch.setattr(documents, "IS_WINDOWS", False)
+    monkeypatch.setattr(documents.shutil, "which", lambda _name: None)
+
+    assert documents.legacy_doc_conversion_engine() is None

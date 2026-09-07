@@ -26,6 +26,7 @@ from .documents import (
     build_quality_evaluation_xlsx,
     build_review_docx,
     convert_legacy_doc,
+    legacy_doc_conversion_engine,
     parse_docx,
     safe_filename,
     sha256_bytes,
@@ -634,7 +635,7 @@ def _process_uploaded_source(
         report(20, "parsing")
         title, clauses, warnings = parse_docx(docx_data, filename, project_id)
         if converted_path:
-            warnings.insert(0, "구형 DOC 원본을 이 PC에서 DOCX로 변환해 분석했습니다.")
+            warnings.insert(0, "구형 DOC 원본을 분석 서버에서 DOCX로 변환해 분석했습니다.")
         sample_text = build_scope_sample(clauses)
         prefixes, scope_display = infer_scope(
             filename,
@@ -818,21 +819,27 @@ async def _stop_upload_jobs() -> None:
 
 @app.get("/api/health")
 def health():
+    doc_conversion_engine = legacy_doc_conversion_engine()
     return {
         "status": "ok",
         "kcs_available": settings.kcs_raw_dir.is_dir(),
         "openai_available": ai_client.available,
+        "doc_upload_available": bool(doc_conversion_engine),
+        "doc_conversion_engine": doc_conversion_engine,
     }
 
 
 @app.get("/api/config")
 async def config():
+    doc_conversion_engine = legacy_doc_conversion_engine()
     ai_config = {
         "openai_available": ai_client.available,
         "openai_embeddings_available": ai_client.embeddings_available,
         "openai_embedding_model": settings.openai_embedding_model,
         "openai_embedding_dimensions": settings.openai_embedding_dimensions,
         "openai_rerank_model": settings.openai_rerank_model,
+        "doc_upload_available": bool(doc_conversion_engine),
+        "doc_conversion_engine": doc_conversion_engine,
     }
     try:
         snapshot, manifest = _reconcile_current_kcs_revision()
