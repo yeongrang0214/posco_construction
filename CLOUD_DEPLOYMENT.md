@@ -17,14 +17,11 @@
 
 ## 최초 1회 필요한 Cloudflare/OpenAI Sites 설정
 
-현재 `.openai/hosting.json`의 `d1`, `r2`가 `null`이므로 저장 리소스가 아직 연결되지 않았습니다. 아래 작업은 저장소 코드만으로 임의 생성하지 않습니다.
+`.openai/hosting.json`은 D1을 `DB`, R2를 `BUCKET`으로 선언합니다. ChatGPT Sites 배포 시 두 저장 리소스가 연결되고, `drizzle/0001_cloud.sql`이 D1에 적용됩니다. 일반 Cloudflare 배포에서는 같은 스키마인 `migrations/0001_cloud.sql`을 사용합니다.
 
-1. ChatGPT Site 프로젝트의 Storage/Hosting 설정에서 D1 데이터베이스 하나를 생성/연결합니다.
-2. R2 버킷 하나를 생성/연결합니다.
-3. D1에 `migrations/0001_cloud.sql`을 적용합니다.
-4. 서버 비밀값 `KCSC_API_KEY`를 설정합니다. 브라우저에 노출되는 `NEXT_PUBLIC_*` 변수로 넣지 마세요.
-5. GPT 정밀분석을 다시 연결할 경우에만 `OPENAI_API_KEY`를 서버 secret으로 추가합니다. 현재 클라우드 1차 전환에서는 기본 KCS 매칭이 OpenAI 키 없이 동작합니다.
-6. 배포 후 화면의 `KCS 갱신`을 한 번 실행하여 D1 KCS 인덱스를 채웁니다.
+1. 서버 비밀값 `KCSC_API_KEY`를 설정합니다. 브라우저에 노출되는 `NEXT_PUBLIC_*` 변수로 넣지 마세요.
+2. GPT 정밀분석을 다시 연결할 경우에만 `OPENAI_API_KEY`를 서버 secret으로 추가합니다. 현재 클라우드 1차 전환에서는 기본 KCS 매칭이 OpenAI 키 없이 동작합니다.
+3. 배포 후 화면의 `KCS 갱신`을 한 번 실행하여 D1 KCS 인덱스를 채웁니다.
 
 코드는 D1/R2의 고정 바인딩 이름에 의존하지 않고, `DB`/`D1`, `BUCKET`/`R2` 또는 호스팅 환경이 주입한 호환 바인딩을 탐색합니다.
 
