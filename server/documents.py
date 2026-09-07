@@ -207,7 +207,7 @@ class NumberingResolver:
         self.numbering = None
         try:
             self.numbering = document.part.numbering_part.element
-        except (AttributeError, KeyError):
+        except (AttributeError, KeyError, NotImplementedError):
             pass
 
     def _num_pr(self, paragraph: Paragraph):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import uuid
+import zipfile
+from xml.etree import ElementTree
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
@@ -28,6 +30,39 @@ def test_generic_word_core_title_falls_back_to_filename(tmp_path):
     )
 
     assert title == "전기_제01장_일반사항_210903"
+
+
+def test_parse_handles_document_without_numbering_part():
+    document = Document()
+    document.add_paragraph("1. 일반사항")
+    document.add_paragraph("본 공사에 적용하는 기준을 따른다.")
+    original = _docx_bytes(document)
+    stripped = io.BytesIO()
+
+    with zipfile.ZipFile(io.BytesIO(original), "r") as source:
+        with zipfile.ZipFile(stripped, "w") as target:
+            for item in source.infolist():
+                if item.filename == "word/numbering.xml":
+                    continue
+                payload = source.read(item.filename)
+                if item.filename == "word/_rels/document.xml.rels":
+                    root = ElementTree.fromstring(payload)
+                    for relationship in list(root):
+                        if relationship.get("Type", "").endswith("/numbering"):
+                            root.remove(relationship)
+                    payload = ElementTree.tostring(
+                        root, encoding="utf-8", xml_declaration=True
+                    )
+                target.writestr(item, payload)
+
+    title, clauses, _warnings = parse_docx(
+        stripped.getvalue(),
+        "건축_제01장_일반사항_201712.docx",
+        str(uuid.uuid4()),
+    )
+
+    assert title == "건축_제01장_일반사항_201712"
+    assert clauses
 
 
 def test_parse_skips_normal_style_toc_when_outline_restarts():
