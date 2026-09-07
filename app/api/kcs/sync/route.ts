@@ -1,5 +1,5 @@
 import { jsonError } from '@/lib/cloud-runtime';
-import { syncKcsCloud } from '@/lib/cloud-spec';
+import { syncKcsCloud } from '@/lib/cloud-kcs';
 
 export async function POST() {
   try {
