@@ -39,7 +39,63 @@ function matchScore(target: string, rendered: string) {
 function clauseSearchText(clause: DocumentMapItem) {
   const content = clause.content.trim();
   const title = clause.title.trim();
-  return normalized(content && content !== title ? `${title} ${content}` : title);
+  if (!content) return normalized(title);
+  const normalizedContent = normalized(content);
+  const normalizedTitle = normalized(title.replace(/…$/, ''));
+  return normalizedTitle && normalizedContent.startsWith(normalizedTitle)
+    ? normalizedContent
+    : normalized(`${title} ${content}`);
+}
+
+type RenderedCandidate = {
+  element: HTMLElement;
+  text: string;
+};
+
+function findBestElements(
+  target: string,
+  candidates: RenderedCandidate[],
+  sourceType: DocumentMapItem['source_type'],
+) {
+  let best: { elements: HTMLElement[]; score: number; lengthDelta: number } | null = null;
+  const isBetter = (score: number, lengthDelta: number, elementCount: number) => (
+    !best
+    || score > best.score
+    || (score === best.score && lengthDelta < best.lengthDelta)
+    || (score === best.score && lengthDelta === best.lengthDelta && elementCount < best.elements.length)
+  );
+
+  for (let start = 0; start < candidates.length; start += 1) {
+    const first = candidates[start];
+    const isTableRow = first.element.tagName === 'TR';
+    if (first.element.dataset.clauseId) continue;
+    if ((sourceType === 'table') !== isTableRow) continue;
+
+    if (isTableRow) {
+      const score = matchScore(target, first.text);
+      const lengthDelta = Math.abs(target.length - first.text.length);
+      if (isBetter(score, lengthDelta, 1)) {
+        best = { elements: [first.element], score, lengthDelta };
+      }
+      continue;
+    }
+
+    let rendered = '';
+    const elements: HTMLElement[] = [];
+    for (let index = start; index < candidates.length && elements.length < 24; index += 1) {
+      const candidate = candidates[index];
+      if (candidate.element.tagName === 'TR' || candidate.element.dataset.clauseId) break;
+      rendered += candidate.text;
+      elements.push(candidate.element);
+      const score = matchScore(target, rendered);
+      const lengthDelta = Math.abs(target.length - rendered.length);
+      if (isBetter(score, lengthDelta, elements.length)) {
+        best = { elements: [...elements], score, lengthDelta };
+      }
+      if (rendered.length > target.length * 1.6) break;
+    }
+  }
+  return best;
 }
 
 export function DocxSourceViewer({
@@ -161,19 +217,15 @@ export function DocxSourceViewer({
       if (clause.source_type === 'heading') continue;
       const target = clauseSearchText(clause);
       if (target.length < 2) continue;
-      let best: { element: HTMLElement; score: number } | null = null;
-      for (const candidate of candidates) {
-        if (clause.source_type === 'table' && candidate.element.tagName !== 'TR') continue;
-        if (clause.source_type !== 'table' && candidate.element.tagName === 'TR') continue;
-        const score = matchScore(target, candidate.text);
-        if (!best || score > best.score) best = { element: candidate.element, score };
+      const best = findBestElements(target, candidates, clause.source_type);
+      if (!best || best.score < 0.56) continue;
+      for (const element of best.elements) {
+        element.dataset.clauseId = clause.id;
+        element.classList.add('spec-source-marker');
+        if (clause.decision) element.classList.add(`spec-source-${clause.decision}`);
+        if (clause.id === activeClauseId) element.classList.add('spec-source-active');
       }
-      if (!best || best.score < 0.56 || best.element.dataset.clauseId) continue;
-      best.element.dataset.clauseId = clause.id;
-      best.element.classList.add('spec-source-marker');
-      if (clause.decision) best.element.classList.add(`spec-source-${clause.decision}`);
-      if (clause.id === activeClauseId) best.element.classList.add('spec-source-active');
-      nextMap.set(clause.id, [best.element]);
+      nextMap.set(clause.id, best.elements);
     }
     elementMapRef.current = nextMap;
   }, [activeClauseId, clauses, error, loading]);
@@ -190,7 +242,7 @@ export function DocxSourceViewer({
     const pageIndex = page ? pages.indexOf(page) : -1;
     setActivePage(pageIndex >= 0 ? pageIndex + 1 : null);
     elements[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [activeClauseId, clauses]);
+  }, [activeClauseId, clauses, error, loading]);
 
   useEffect(() => {
     const body = bodyRef.current;
