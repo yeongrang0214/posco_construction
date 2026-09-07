@@ -1,6 +1,6 @@
 # 포스코 시방서 정합성 검토
 
-포스코 사내 시방서의 각 조항을 최신 국가건설기준센터 KCS와 비교하고, 담당자가 `남김`, `삭제`, `보류`를 결정하는 사내용 로컬 웹 도구입니다. 원본 문서와 판단 결과는 이 PC에 저장됩니다. OpenAI 기능을 켠 경우에만 비교 대상 문장이 OpenAI API로 전송됩니다.
+포스코 사내 시방서의 각 조항을 최신 국가건설기준센터 KCS와 비교하고, 담당자가 `남김`, `삭제`, `보류`를 결정하는 웹 도구입니다. 로컬 실행 시 원본 문서와 판단 결과는 이 PC에 저장되고, 상시 운영 시에는 백엔드의 영구 볼륨에 저장됩니다. OpenAI 기능을 켠 경우에만 비교 대상 문장이 OpenAI API로 전송됩니다.
 
 ## 바로 실행
 
@@ -104,6 +104,22 @@ server            문서 분석, 매칭, 저장, 내보내기 API
 data              업로드 문서, SQLite, 생성 결과물(외부 공개 금지)
 scripts           로컬 일괄 실행 스크립트
 ```
+
+## 24시간 상시 운영
+
+화면은 Sites의 공개 주소에서 서비스하고, Python API는 `Dockerfile`로 빌드되는 상시 실행형 클라우드 서비스에 배포합니다. 백엔드에는 반드시 `/var/data` 영구 볼륨을 연결해야 합니다. 볼륨 없이 배포하면 재배포 때 SQLite 데이터베이스, 업로드 문서와 KCS 자료가 사라질 수 있습니다.
+
+백엔드 환경 변수는 다음과 같이 설정합니다. 실제 인증키는 GitHub이나 Docker 이미지에 넣지 않고 호스팅 서비스의 비밀 변수로 등록합니다.
+
+```text
+SPEC_MANAGER_DATA_DIR=/var/data/spec-manager
+KCS_DATA_DIR=/var/data/kcs
+SPEC_MANAGER_CORS_ORIGINS=https://posco-spec-manager.yeongrangrang.chatgpt.site
+KCSC_API_KEY=...
+OPENAI_API_KEY=...
+```
+
+배포 후 `/api/health`가 `200`을 반환하는지 확인하고, 생성된 API 주소를 프런트 빌드의 `NEXT_PUBLIC_API_BASE_URL`에 설정한 뒤 Sites를 다시 배포합니다. 데이터 일관성을 위해 영구 볼륨을 사용하는 백엔드는 한 인스턴스·한 Uvicorn 프로세스로 운영합니다. Docker 환경에서는 LibreOffice가 기존 `.doc` 파일을 `.docx`로 변환합니다.
 
 ## 검증 명령
 

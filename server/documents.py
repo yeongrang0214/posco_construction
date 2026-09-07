@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
+import shutil
 import subprocess
 import uuid
 import zipfile
@@ -22,6 +24,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .text_analysis import starts_with_quantity
+
+
+IS_WINDOWS = os.name == "nt"
 
 
 AI_RELATION_LABELS = {
@@ -122,21 +127,36 @@ def convert_legacy_doc(input_path: Path, output_path: Path) -> bytes:
     if input_path.parent != output_path.parent:
         raise ValueError("DOC와 변환 파일은 같은 보안 저장 폴더에 있어야 합니다.")
 
-    script_path = Path(__file__).with_name("convert_legacy_doc.ps1")
-    command = [
-        "powershell.exe",
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script_path),
-        "-InputPath",
-        str(input_path),
-        "-OutputPath",
-        str(output_path),
-    ]
+    output_path.unlink(missing_ok=True)
+    if IS_WINDOWS:
+        script_path = Path(__file__).with_name("convert_legacy_doc.ps1")
+        command = [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-InputPath",
+            str(input_path),
+            "-OutputPath",
+            str(output_path),
+        ]
+    else:
+        office = shutil.which("libreoffice") or shutil.which("soffice")
+        if not office:
+            raise ValueError("DOC 변환 프로그램(LibreOffice)을 찾을 수 없습니다.")
+        command = [
+            office,
+            "--headless",
+            "--convert-to",
+            "docx",
+            "--outdir",
+            str(input_path.parent),
+            str(input_path),
+        ]
     try:
         result = subprocess.run(
             command,
@@ -147,7 +167,7 @@ def convert_legacy_doc(input_path: Path, output_path: Path) -> bytes:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         output_path.unlink(missing_ok=True)
-        raise ValueError("DOC 파일 변환을 시작하지 못했습니다. Microsoft Word 설치 상태를 확인하세요.") from exc
+        raise ValueError("DOC 파일 변환 프로그램을 시작하지 못했습니다.") from exc
     if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
         output_path.unlink(missing_ok=True)
         raise ValueError("DOC 파일을 변환하지 못했습니다. 암호 또는 파일 손상 여부를 확인하세요.")
