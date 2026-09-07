@@ -38,7 +38,13 @@ def _seed_catalog(store: Store, tmp_path: Path, count: int = 125) -> list[str]:
             (
                 project_id,
                 title,
-                f"{title}.docx",
+                (
+                    f"건축_{title}.docx"
+                    if index % 3 == 0
+                    else f"건축설비_{title}.docx"
+                    if index % 3 == 1
+                    else f"전기_{title}.docx"
+                ),
                 str(tmp_path / f"{project_id}.docx"),
                 f"sha-{project_id}",
                 UPLOADED_AT,
@@ -223,6 +229,25 @@ def test_catalog_filters_totals_and_global_latest_metadata(catalog_api):
         for project in all_impacts["projects"]
     )
 
+    architecture = client.get(
+        "/api/projects",
+        params={"include_archived": True, "discipline": "architecture", "limit": 100},
+    ).json()
+    mechanical = client.get(
+        "/api/projects",
+        params={"include_archived": True, "discipline": "mechanical", "limit": 100},
+    ).json()
+    electrical = client.get(
+        "/api/projects",
+        params={"include_archived": True, "discipline": "electrical", "limit": 100},
+    ).json()
+    assert architecture["total"] == 42
+    assert mechanical["total"] == 42
+    assert electrical["total"] == 41
+    assert all(item["source_filename"].startswith("건축_") for item in architecture["projects"])
+    assert all(item["source_filename"].startswith("건축설비_") for item in mechanical["projects"])
+    assert all(item["source_filename"].startswith("전기_") for item in electrical["projects"])
+
 
 def test_project_detail_keeps_global_latest_metadata_when_project_is_off_page(
     catalog_api,
@@ -266,6 +291,22 @@ def test_catalog_rejects_malformed_and_filter_mismatched_cursors(catalog_api):
     )
     assert mismatch.status_code == 400
     assert "검색 조건" in mismatch.json()["detail"]
+
+    discipline_page = client.get(
+        "/api/projects",
+        params={"include_archived": True, "discipline": "architecture", "limit": 10},
+    ).json()
+    discipline_mismatch = client.get(
+        "/api/projects",
+        params={
+            "include_archived": True,
+            "discipline": "electrical",
+            "limit": 10,
+            "cursor": discipline_page["next_cursor"],
+        },
+    )
+    assert discipline_mismatch.status_code == 400
+    assert "검색 조건" in discipline_mismatch.json()["detail"]
 
 
 def test_catalog_filters_workflow_queues_and_binds_cursor_to_status(catalog_api):

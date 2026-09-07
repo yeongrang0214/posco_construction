@@ -15,6 +15,7 @@ import {
   FileDown,
   FileSpreadsheet,
   FileText,
+  LibraryBig,
   Layers3,
   LockKeyhole,
   Plus,
@@ -73,6 +74,7 @@ import {
   KcsConfig,
   KcsRematchRun,
   Project,
+  ProjectDiscipline,
   ProjectReviewStatus,
   QualityEvaluation,
   QualityInsightRow,
@@ -116,6 +118,16 @@ function reviewStatusLabel(status: ProjectReviewStatus) {
   if (status === 'changes_requested') return '반려 · 수정 중';
   if (status === 'approved') return '승인 완료';
   return '작성 중';
+}
+
+function projectDisplayTitle(project: Pick<Project, 'title' | 'source_filename'>) {
+  const title = project.title.trim();
+  if (title && !/^(word document|document|문서)$/i.test(title)) return title;
+  return project.source_filename
+    .replace(/\.docx?$/i, '')
+    .replace(/^(건축설비|건축|전기시방서|전기)_/, '')
+    .replace(/_\d{6}$/, '')
+    .replaceAll('_', ' ');
 }
 
 function reviewStatusVariant(status: ProjectReviewStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -411,6 +423,7 @@ function ProjectSelector({
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [filter, setFilter] = useState<ProjectListFilter>('active');
+  const [discipline, setDiscipline] = useState<ProjectDiscipline | 'all'>('all');
   const [catalogProjects, setCatalogProjects] = useState<Project[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -478,6 +491,7 @@ function ProjectSelector({
             : filter === 'changes_requested'
               ? 'changes_requested'
               : undefined,
+          discipline: discipline === 'all' ? undefined : discipline,
           limit: PROJECT_CATALOG_PAGE_SIZE,
         });
         if (cancelled || requestSequence.current !== sequence) return;
@@ -495,7 +509,7 @@ function ProjectSelector({
     void loadFirstPage();
 
     return () => { cancelled = true; };
-  }, [debouncedQuery, filter, open, refreshKey, retryKey]);
+  }, [debouncedQuery, discipline, filter, open, refreshKey, retryKey]);
 
   const currentCatalogProject = currentCatalogMetadata?.projectId === currentProject.id
     && currentCatalogMetadata.refreshKey === refreshKey
@@ -542,8 +556,9 @@ function ProjectSelector({
         reviewStatus: filter === 'approval_pending'
           ? 'submitted'
           : filter === 'changes_requested'
-            ? 'changes_requested'
-            : undefined,
+              ? 'changes_requested'
+              : undefined,
+        discipline: discipline === 'all' ? undefined : discipline,
         limit: PROJECT_CATALOG_PAGE_SIZE,
         cursor: nextCursor,
       });
@@ -571,16 +586,17 @@ function ProjectSelector({
         className="max-w-72 justify-between"
         onClick={() => setOpen(true)}
         disabled={disabled}
-        aria-label="검토 프로젝트 찾기"
+        aria-label="시방서 라이브러리 열기"
       >
-        <span className="truncate">{currentCatalogProject.title}</span>
+        <LibraryBig className="shrink-0" />
+        <span className="truncate">{projectDisplayTitle(currentCatalogProject)}</span>
         <ChevronDown className="shrink-0" />
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl gap-3">
           <DialogHeader>
-            <DialogTitle>검토 프로젝트 찾기</DialogTitle>
-            <DialogDescription>서버에서 문서명이나 파일명을 검색하고 상태별로 좁혀보세요.</DialogDescription>
+            <DialogTitle>시방서 라이브러리</DialogTitle>
+            <DialogDescription>서버에 등록된 시방서를 분야별로 찾아 바로 검토할 수 있습니다.</DialogDescription>
           </DialogHeader>
           <label className="relative block">
             {searchPending ? <Spinner className="absolute left-3 top-2.5 size-4" /> : <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />}
@@ -591,6 +607,20 @@ function ProjectSelector({
               placeholder="프로젝트명·원본 파일명·KCS 범위 검색"
             />
           </label>
+          <div className="flex flex-wrap items-center gap-1" aria-label="시방서 분야 필터">
+            <span className="mr-1 text-xs font-medium text-muted-foreground">분야</span>
+            {([['all', '전체'], ['architecture', '건축'], ['mechanical', '건축설비'], ['electrical', '전기']] as [ProjectDiscipline | 'all', string][]).map(([value, label]) => (
+              <Button
+                key={value}
+                size="sm"
+                variant={discipline === value ? 'secondary' : 'ghost'}
+                aria-pressed={discipline === value}
+                onClick={() => setDiscipline(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center gap-1" aria-label="프로젝트 상태 필터">
             {([['active', '전체'], ['approval_pending', '승인 대기'], ['changes_requested', '수정 요청'], ['kcs_impact', 'KCS 재검토'], ['current', '현행 파서'], ['legacy', '재업로드'], ['archived', '보관됨']] as [ProjectListFilter, string][]).map(([value, label]) => (
               <Button
@@ -634,7 +664,7 @@ function ProjectSelector({
                     }}
                   >
                     <span className="flex flex-wrap items-center gap-1.5">
-                      <span className="truncate font-medium">{item.title}</span>
+                      <span className="truncate font-medium">{projectDisplayTitle(item)}</span>
                       <Badge variant={reviewStatusVariant(item.status)}>{reviewStatusLabel(item.status)}</Badge>
                       {itemMarker && <Badge variant={item.requires_source_reupload ? 'destructive' : 'secondary'}>{itemMarker}</Badge>}
                       {item.unacknowledged_kcs_impact_count ? <Badge variant="outline">KCS 재검토 {item.unacknowledged_kcs_impact_count}</Badge> : null}
@@ -1440,7 +1470,7 @@ export function SpecReviewApp() {
       const nextProject = normalizeProject(result.project);
       if (currentProjectId.current === nextProject.id) setProject(nextProject);
       setProjectCatalogRefreshKey((current) => current + 1);
-      setNotice(archived ? `${item.title} 프로젝트를 보관했습니다.` : `${item.title} 프로젝트를 복원했습니다.`);
+      setNotice(archived ? `${projectDisplayTitle(item)} 프로젝트를 보관했습니다.` : `${projectDisplayTitle(item)} 프로젝트를 복원했습니다.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '프로젝트 보관 상태를 변경하지 못했습니다.');
     } finally {
@@ -2623,7 +2653,7 @@ export function SpecReviewApp() {
               <span className="text-sm text-muted-foreground">{project.source_filename}</span>
               <span className="text-sm text-muted-foreground">· {project.kcs_scope}</span>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{projectDisplayTitle(project)}</h1>
             <p className="mt-1 text-sm text-muted-foreground">KCS 스냅샷 {snapshotDate(project.kcs_snapshot)} · 검색 가능 {config?.kcs_usable_document_count ?? config?.kcs_document_count ?? 0}건{config?.kcs_unavailable_document_count ? ` · 본문 제외 ${config.kcs_unavailable_document_count}건` : ''}</p>
             <div className="mt-4 flex flex-wrap gap-2">
               <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1" aria-label="검토 모드">
@@ -3300,7 +3330,7 @@ export function SpecReviewApp() {
             <div className="rounded-lg border border-border bg-muted/45 p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline">{reviewWorkflowDialog === 'submit' ? '역할 · 작성자' : '역할 · 승인자'}</Badge>
-                <span className="font-medium">{project.title}</span>
+                <span className="font-medium">{projectDisplayTitle(project)}</span>
               </div>
               {reviewWorkflowDialog === 'decision' && latestReviewSubmission ? (
                 <div className="mt-2 space-y-1 text-xs text-muted-foreground">

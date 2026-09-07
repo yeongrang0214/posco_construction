@@ -1004,6 +1004,9 @@ def list_projects(
     review_status: Literal[
         "reviewing", "submitted", "changes_requested", "approved"
     ] | None = Query(default=None),
+    discipline: Literal["architecture", "mechanical", "electrical"] | None = Query(
+        default=None
+    ),
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str = Query(default="", max_length=2048),
 ):
@@ -1015,6 +1018,7 @@ def list_projects(
             archive_status=archive_status or "",
             kcs_impact_only=kcs_impact_only,
             review_status=review_status or "",
+            discipline=discipline or "",
             limit=limit,
             cursor=cursor,
         )

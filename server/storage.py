@@ -401,6 +401,7 @@ def _project_catalog_filter_signature(
     archive_status: str,
     kcs_impact_only: bool,
     review_status: str,
+    discipline: str,
 ) -> str:
     raw = json.dumps(
         {
@@ -410,6 +411,7 @@ def _project_catalog_filter_signature(
             "archive_status": archive_status,
             "kcs_impact_only": kcs_impact_only,
             "review_status": review_status,
+            "discipline": discipline,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -3854,6 +3856,7 @@ class Store:
         archive_status: str = "",
         kcs_impact_only: bool = False,
         review_status: str = "",
+        discipline: str = "",
         limit: int = 50,
         cursor: str = "",
     ) -> dict[str, Any]:
@@ -3861,6 +3864,7 @@ class Store:
         parser_status = str(parser_status or "").strip()
         archive_status = str(archive_status or "").strip()
         review_status = str(review_status or "").strip()
+        discipline = str(discipline or "").strip()
         cursor = str(cursor or "").strip()
         if len(search) > 200:
             raise ValueError("검색어는 200자 이하여야 합니다.")
@@ -3872,6 +3876,8 @@ class Store:
             "", "reviewing", "submitted", "changes_requested", "approved"
         }:
             raise ValueError("프로젝트 승인 상태 필터가 올바르지 않습니다.")
+        if discipline not in {"", "architecture", "mechanical", "electrical"}:
+            raise ValueError("시방서 분야 필터가 올바르지 않습니다.")
         if not 1 <= limit <= 100:
             raise ValueError("페이지 크기는 1 이상 100 이하여야 합니다.")
 
@@ -3926,6 +3932,15 @@ class Store:
         if review_status:
             conditions.append("p.status = ?")
             parameters.append(review_status)
+        if discipline == "architecture":
+            conditions.append("p.source_filename LIKE '건축\\_%' ESCAPE '\\'")
+        elif discipline == "mechanical":
+            conditions.append("p.source_filename LIKE '건축설비\\_%' ESCAPE '\\'")
+        elif discipline == "electrical":
+            conditions.append(
+                "(p.source_filename LIKE '전기\\_%' ESCAPE '\\' "
+                "OR p.source_filename LIKE '전기시방서\\_%' ESCAPE '\\')"
+            )
         filter_where = " AND ".join(f"({condition.strip()})" for condition in conditions)
         filter_signature = _project_catalog_filter_signature(
             search,
@@ -3934,6 +3949,7 @@ class Store:
             archive_status,
             bool(kcs_impact_only),
             review_status,
+            discipline,
         )
         cursor_parameters: list[Any] = []
         page_where = filter_where

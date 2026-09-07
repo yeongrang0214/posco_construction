@@ -4,6 +4,7 @@ export const API_BASE =
 
 export type Decision = 'keep' | 'delete' | 'hold' | null;
 export type ProjectReviewStatus = 'reviewing' | 'submitted' | 'changes_requested' | 'approved';
+export type ProjectDiscipline = 'architecture' | 'mechanical' | 'electrical';
 export type ReviewSubmissionStatus = 'submitted' | 'changes_requested' | 'approved' | 'superseded';
 
 export interface ReviewSubmission {
@@ -549,6 +550,7 @@ export const api = {
     archiveStatus?: 'active' | 'archived';
     kcsImpactOnly?: boolean;
     reviewStatus?: ProjectReviewStatus;
+    discipline?: ProjectDiscipline;
     limit?: number;
     cursor?: string;
   } = {}) => {
@@ -558,6 +560,7 @@ export const api = {
     if (options.archiveStatus) params.set('archive_status', options.archiveStatus);
     if (options.kcsImpactOnly) params.set('kcs_impact_only', 'true');
     if (options.reviewStatus) params.set('review_status', options.reviewStatus);
+    if (options.discipline) params.set('discipline', options.discipline);
     if (options.limit !== undefined) params.set('limit', String(options.limit));
     if (options.cursor) params.set('cursor', options.cursor);
     const query = params.toString();

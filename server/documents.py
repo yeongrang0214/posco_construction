@@ -743,7 +743,11 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
         warnings.append("변경 내용 추적 요소가 있습니다. 확정된 문서로 다시 업로드하는 것을 권장합니다.")
 
     core_title = clean_text(document.core_properties.title)
-    title = core_title or Path(filename).stem
+    title = (
+        Path(filename).stem
+        if core_title.casefold() in {"word document", "document", "문서"}
+        else core_title or Path(filename).stem
+    )
     return title, clauses, warnings
 
 

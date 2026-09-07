@@ -17,6 +17,19 @@ def _docx_bytes(document: Document) -> bytes:
     return output.getvalue()
 
 
+def test_generic_word_core_title_falls_back_to_filename(tmp_path):
+    document = Document()
+    document.core_properties.title = "Word Document"
+    document.add_paragraph("1. 일반사항")
+    document.add_paragraph("이 시방서는 시험공사에 적용한다.")
+
+    title, _clauses, _warnings = parse_docx(
+        _docx_bytes(document), "전기_제01장_일반사항_210903.docx", str(uuid.uuid4())
+    )
+
+    assert title == "전기_제01장_일반사항_210903"
+
+
 def test_parse_skips_normal_style_toc_when_outline_restarts():
     document = Document()
     document.add_paragraph("철골공사 시방서")
