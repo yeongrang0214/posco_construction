@@ -2,12 +2,18 @@ import { getDatabase, nowIso, optionalSecret } from '@/lib/cloud-runtime';
 
 const KCSC_BASE = 'https://kcsc.re.kr/OpenApi';
 
-function normalize(text: string) {
-  return text.toLowerCase().replace(/[^0-9a-z가-힣.%/+-]+/g, ' ').replace(/\s+/g, ' ').trim();
+function text(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return `${value}`;
+  return fallback;
+}
+
+function normalize(value: string) {
+  return value.toLowerCase().replace(/[^0-9a-z가-힣.%/+-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function stripHtml(value: unknown) {
-  return String(value || '')
+  return text(value)
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
@@ -25,7 +31,7 @@ async function kcscJson(path: string, key: string) {
   if (!response.ok) throw new Error(`KCSC API가 HTTP ${response.status}을 반환했습니다.`);
   const payload = await response.json() as unknown;
   if (payload && typeof payload === 'object' && !Array.isArray(payload) && 'message' in payload) {
-    throw new Error(String((payload as { message?: unknown }).message || 'KCSC API 오류'));
+    throw new Error(text((payload as { message?: unknown }).message, 'KCSC API 오류'));
   }
   return payload;
 }
@@ -59,26 +65,32 @@ export async function syncKcsCloud() {
 
   const items = codeList
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-    .filter((item) => String(item.codeType || '').toUpperCase() === 'KCS' && String(item.code || '').trim());
+    .filter((item) => text(item.codeType).toUpperCase() === 'KCS' && text(item.code).trim());
   if (!items.length) throw new Error('KCS 코드 목록이 비어 있습니다.');
 
   const existingResult = await db.prepare('SELECT kcs_code, version, update_date, document_name FROM kcs_documents').all<{
-    kcs_code: string; version: string; update_date: string; document_name: string;
+    kcs_code: string;
+    version: string;
+    update_date: string;
+    document_name: string;
   }>();
   const existing = new Map((existingResult.results || []).map((row) => [row.kcs_code, row]));
   const changedItems = items.filter((item) => {
-    const code = String(item.code || '');
+    const code = text(item.code);
     const old = existing.get(code);
-    return !old || old.version !== String(item.version || '') || old.update_date !== String(item.updateDate || '') || old.document_name !== String(item.name || '');
+    return !old
+      || old.version !== text(item.version)
+      || old.update_date !== text(item.updateDate)
+      || old.document_name !== text(item.name);
   });
 
   const downloaded = await mapLimit(changedItems, 6, async (item) => {
-    const code = String(item.code || '');
+    const code = text(item.code);
     const payload = await kcscJson(`CodeViewer/KCS/${encodeURIComponent(code)}`, key);
     const records = Array.isArray(payload)
       ? payload.filter((candidate): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === 'object'))
       : [];
-    const record = records.find((candidate) => String(candidate.code || '') === code && Array.isArray(candidate.list));
+    const record = records.find((candidate) => text(candidate.code) === code && Array.isArray(candidate.list));
     return { item, record: record || null };
   });
 
@@ -87,7 +99,7 @@ export async function syncKcsCloud() {
   let unavailable = 0;
 
   for (const { item, record } of downloaded) {
-    const code = String(item.code || '');
+    const code = text(item.code);
     if (!record || !Array.isArray(record.list)) {
       unavailable += 1;
       continue;
@@ -98,8 +110,14 @@ export async function syncKcsCloud() {
       INSERT INTO kcs_documents (id,kcs_code,full_code,document_name,version,update_date,parent_names,synced_at)
       VALUES (?,?,?,?,?,?,?,?)
     `).bind(
-      documentId, code, String(item.fullCode || ''), String(item.name || ''), String(item.version || ''),
-      String(item.updateDate || ''), JSON.stringify(item.listParentCodes || []), syncedAt,
+      documentId,
+      code,
+      text(item.fullCode),
+      text(item.name),
+      text(item.version),
+      text(item.updateDate),
+      JSON.stringify(item.listParentCodes || []),
+      syncedAt,
     ).run();
 
     let sectionOrder = 0;
@@ -110,22 +128,40 @@ export async function syncKcsCloud() {
       const content = stripHtml(section.contents);
       if (!title && !content) continue;
       sectionOrder += 1;
-      const clause = String(section.code || section.section || section.no || '');
+      const clause = text(section.code) || text(section.section) || text(section.no);
       await db.prepare(`
         INSERT INTO kcs_sections
         (id,document_id,kcs_code,section_order,kcs_clause,title,content,search_text,version,update_date,document_name)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)
       `).bind(
-        `${documentId}_s${sectionOrder}`, documentId, code, sectionOrder, clause, title, content,
-        normalize(`${code} ${title} ${content}`), String(item.version || ''), String(item.updateDate || ''), String(item.name || ''),
+        `${documentId}_s${sectionOrder}`,
+        documentId,
+        code,
+        sectionOrder,
+        clause,
+        title,
+        content,
+        normalize(`${code} ${title} ${content}`),
+        text(item.version),
+        text(item.updateDate),
+        text(item.name),
       ).run();
     }
     usable += 1;
   }
 
-  const revision = await sha256Hex(items.map((item) => [item.code, item.version, item.updateDate, item.name].join('|')).sort().join('\n'));
-  await db.prepare("INSERT INTO app_meta(key,value,updated_at) VALUES('kcs_revision',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(revision, syncedAt).run();
-  await db.prepare("INSERT INTO app_meta(key,value,updated_at) VALUES('kcs_snapshot',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at").bind(syncedAt, syncedAt).run();
+  const revision = await sha256Hex(
+    items
+      .map((item) => [text(item.code), text(item.version), text(item.updateDate), text(item.name)].join('|'))
+      .sort()
+      .join('\n'),
+  );
+  await db.prepare(
+    "INSERT INTO app_meta(key,value,updated_at) VALUES('kcs_revision',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+  ).bind(revision, syncedAt).run();
+  await db.prepare(
+    "INSERT INTO app_meta(key,value,updated_at) VALUES('kcs_snapshot',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+  ).bind(syncedAt, syncedAt).run();
 
   return {
     kcs_snapshot: syncedAt,
