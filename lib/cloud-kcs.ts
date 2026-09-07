@@ -42,7 +42,7 @@ async function sha256Hex(value: string) {
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const output = new Array<R>(items.length);
+  const output = Array<R>(items.length);
   let cursor = 0;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (cursor < items.length) {
