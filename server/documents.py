@@ -29,6 +29,15 @@ from .text_analysis import starts_with_quantity
 IS_WINDOWS = os.name == "nt"
 
 
+def legacy_doc_conversion_engine() -> str | None:
+    """Return the conversion engine available to the current runtime."""
+    if IS_WINDOWS:
+        return "microsoft_word"
+    if shutil.which("libreoffice") or shutil.which("soffice"):
+        return "libreoffice"
+    return None
+
+
 AI_RELATION_LABELS = {
     "equivalent": "실질적 동일",
     "kcs_covers": "KCS가 포괄",
@@ -1293,3 +1302,4 @@ def build_quality_evaluation_xlsx(
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
+
