@@ -22,16 +22,6 @@ import {
 import { DocxSourceViewer } from '@/components/docx-source-viewer';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -210,7 +200,6 @@ export function BulkReview({
   const [loadError, setLoadError] = useState('');
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [rowReasons, setRowReasons] = useState<Record<string, string>>({});
-  const [pendingDelete, setPendingDelete] = useState<BulkReviewItem | null>(null);
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [documentMap, setDocumentMap] = useState<DocumentMapItem[]>([]);
@@ -532,7 +521,12 @@ export function BulkReview({
       }));
       return;
     }
-    setPendingDelete(item);
+    void saveRow(item, {
+      decision: 'delete',
+      decision_reason: 'fully_covered_by_kcs',
+      coverage_confirmed: true,
+      ...kcsImpactAcknowledgement(item),
+    });
   }
 
   function selectCandidate(item: BulkReviewItem, candidateId: string) {
@@ -924,55 +918,6 @@ export function BulkReview({
         {loadingMore ? <span className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner />다음 60개 조항을 불러오는 중입니다.</span> : !loading && !hasMore && items.length > 0 ? <span className="text-sm text-muted-foreground">전체 {total}개 조항을 모두 표시했습니다.</span> : null}
       </div>
 
-      <AlertDialog
-        open={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open && !savingAny && !structureBusy) {
-            setPendingDelete(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>이 포스코 조항을 삭제 판정할까요?</AlertDialogTitle>
-            <AlertDialogDescription>
-              선택한 KCS가 포스코 조항의 수치·조건·예외를 포함한 전체 요구사항을 대신할 수 있을 때만 진행하세요.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {pendingDelete && (
-            <div className="rounded-lg border border-border bg-muted/45 p-3 text-sm">
-              <p className="font-medium">{pendingDelete.label} · {pendingDelete.title}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                근거 KCS: {pendingDelete.candidates.find((candidate) => candidate.id === pendingDelete.selected_candidate_id)?.kcs_code || '선택 후보 확인 필요'}
-              </p>
-            </div>
-          )}
-          <p className="rounded-lg border border-border p-3 text-sm leading-6">
-            삭제 판정 저장을 누르면 포스코 요구사항 전체가 선택 KCS에 포함되고, 수치·의무·금지·예외 차이가 없음을 확인한 것으로 처리됩니다.
-          </p>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={savingAny || structureBusy}>취소</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={savingAny || structureBusy}
-              onClick={async () => {
-                if (!pendingDelete) return;
-                const saved = await saveRow(pendingDelete, {
-                  decision: 'delete',
-                  decision_reason: 'fully_covered_by_kcs',
-                  coverage_confirmed: true,
-                  ...kcsImpactAcknowledgement(pendingDelete),
-                });
-                if (saved) {
-                  setPendingDelete(null);
-                }
-              }}
-            >
-              {savingAny ? <Spinner /> : <Trash2 />}삭제 판정 저장
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 }

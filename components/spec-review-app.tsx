@@ -36,7 +36,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -985,7 +984,6 @@ export function SpecReviewApp() {
   const [reviewNote, setReviewNote] = useState('');
   const [decisionReason, setDecisionReason] = useState('');
   const [coverageConfirmed, setCoverageConfirmed] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [candidateTab, setCandidateTab] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -1269,7 +1267,6 @@ export function SpecReviewApp() {
         setReviewNote(clause.review_note || '');
         setDecisionReason(clause.decision_reason || '');
         setCoverageConfirmed(Boolean(clause.coverage_confirmed));
-        setDeleteDialogOpen(false);
         setSelectedCandidateId(clause.selected_candidate_id);
         const preferredCandidateId = qualityItem?.relevant_candidate_id;
         setCandidateTab(
@@ -2058,7 +2055,7 @@ export function SpecReviewApp() {
         setError('GPT 전체포괄 분석에서 실제 근거로 사용된 KCS 후보를 선택해 주세요.');
         return;
       }
-      setDeleteDialogOpen(true);
+      await saveCurrent('delete', true, 'fully_covered_by_kcs', true);
       return;
     }
     if (!isDecisionReason(value, decisionReason)) {
@@ -3568,49 +3565,6 @@ export function SpecReviewApp() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog
-        open={deleteDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && !saving) {
-            setDeleteDialogOpen(false);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>포스코 조항을 삭제 판정할까요?</AlertDialogTitle>
-            <AlertDialogDescription>
-              문장 유사도가 아니라 선택 KCS 또는 분석된 KCS 조합이 포스코 요구사항 전체를 대체하는지 확인해야 합니다.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {detail && (
-            <div className="space-y-2 rounded-lg border border-border bg-muted/45 p-3 text-sm">
-              <p className="font-medium">{detail.label} · {detail.title}</p>
-              <p className="text-xs text-muted-foreground">
-                선택 근거: {detail.candidates.find((candidate) => candidate.id === selectedCandidateId)?.kcs_code || 'KCS 후보 확인 필요'}
-              </p>
-            </div>
-          )}
-          <p className="rounded-lg border border-border p-3 text-sm leading-6">
-            삭제 판정 저장을 누르면 수치·적용 조건·예외·시험 빈도·책임·의무 및 금지 표현을 포함한 포스코 요구사항 전체가 근거 KCS에 포함됨을 확인한 것으로 처리됩니다.
-          </p>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={detailMutationBusy}>취소</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={detailMutationBusy}
-              onClick={async () => {
-                const saved = await saveCurrent('delete', true, 'fully_covered_by_kcs', true);
-                if (saved) {
-                  setDeleteDialogOpen(false);
-                }
-              }}
-            >
-              {saving ? <Spinner /> : <Trash2 />}삭제 판정 저장
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </main>
   );
 }
