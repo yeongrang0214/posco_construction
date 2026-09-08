@@ -1012,6 +1012,52 @@ class Store:
                 connection.execute(
                     "ALTER TABLE decision_history ADD COLUMN coverage_analysis_json TEXT NOT NULL DEFAULT ''"
                 )
+            inconsistent_no_match_rows = connection.execute(
+                """
+                SELECT c.*
+                FROM clauses c
+                JOIN projects p ON p.id = c.project_id
+                WHERE p.status IN ('reviewing', 'changes_requested')
+                  AND c.decision = 'keep'
+                  AND c.decision_reason = 'no_kcs_match'
+                  AND (
+                    c.selected_candidate_id IS NOT NULL
+                    OR c.coverage_confirmed != 0
+                  )
+                """
+            ).fetchall()
+            for row in inconsistent_no_match_rows:
+                changed_at = datetime.now(timezone.utc).isoformat()
+                connection.execute(
+                    """
+                    UPDATE clauses
+                    SET selected_candidate_id = NULL,
+                        coverage_confirmed = 0,
+                        reviewed_at = ?
+                    WHERE id = ? AND project_id = ?
+                    """,
+                    (changed_at, row["id"], row["project_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO decision_history(
+                        clause_id, previous_decision, new_decision,
+                        edited_content, review_note, decision_reason,
+                        coverage_confirmed, selected_candidate_id,
+                        coverage_analysis_json, changed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+                    """,
+                    (
+                        row["id"],
+                        row["decision"],
+                        row["decision"],
+                        row["edited_content"],
+                        row["review_note"],
+                        row["decision_reason"],
+                        self._coverage_analysis_snapshot(connection, row["id"]),
+                        changed_at,
+                    ),
+                )
             quality_item_columns = {
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(quality_evaluation_items)")

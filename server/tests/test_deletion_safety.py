@@ -187,6 +187,48 @@ def test_no_kcs_match_keep_clears_an_existing_candidate(tmp_path):
     assert saved["coverage_confirmed"] is False
 
 
+def test_store_startup_repairs_legacy_no_kcs_match_selection(tmp_path):
+    store, project_id = _store_with_project(tmp_path)
+    store.update_decision(
+        project_id,
+        "clause",
+        "keep",
+        "강구조 요구사항을 적용한다.",
+        "",
+        None,
+        decision_reason="no_kcs_match",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """
+            UPDATE clauses
+            SET selected_candidate_id = 'safe-candidate', coverage_confirmed = 1
+            WHERE id = 'clause'
+            """
+        )
+        history_before = connection.execute(
+            "SELECT COUNT(*) FROM decision_history WHERE clause_id = 'clause'"
+        ).fetchone()[0]
+
+    repaired_store = Store(store.database_path)
+    repaired = repaired_store.get_clause(project_id, "clause")
+    assert repaired is not None
+    assert repaired["selected_candidate_id"] is None
+    assert repaired["coverage_confirmed"] is False
+    with repaired_store.connect() as connection:
+        history_after = connection.execute(
+            "SELECT COUNT(*) FROM decision_history WHERE clause_id = 'clause'"
+        ).fetchone()[0]
+    assert history_after == history_before + 1
+
+    Store(store.database_path)
+    with repaired_store.connect() as connection:
+        history_after_second_start = connection.execute(
+            "SELECT COUNT(*) FROM decision_history WHERE clause_id = 'clause'"
+        ).fetchone()[0]
+    assert history_after_second_start == history_after
+
+
 def test_management_delete_requires_a_written_reason(tmp_path):
     store, project_id = _store_with_project(tmp_path)
 

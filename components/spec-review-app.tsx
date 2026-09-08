@@ -823,6 +823,7 @@ function CandidatePanel({
   analysisAllowed,
   analyzing,
   interactionDisabled,
+  selectionDisabled,
   onAnalyze,
   onApplySimplified,
   showSelection = true,
@@ -834,6 +835,7 @@ function CandidatePanel({
   analysisAllowed: boolean;
   analyzing: boolean;
   interactionDisabled?: boolean;
+  selectionDisabled?: boolean;
   onAnalyze: () => void;
   onApplySimplified?: (content: string) => void;
   showSelection?: boolean;
@@ -924,7 +926,7 @@ function CandidatePanel({
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <span className="text-sm text-muted-foreground">버전 {candidate.version} · 개정 {candidate.update_date || '확인 필요'}</span>
         {showSelection && (
-          <Button variant={selected ? 'default' : 'outline'} aria-pressed={selected} onClick={onSelect} disabled={interactionDisabled}>
+          <Button variant={selected ? 'default' : 'outline'} aria-pressed={selected} onClick={onSelect} disabled={interactionDisabled || selectionDisabled}>
             {selected ? <Check /> : <Circle />}{selected ? '판정 근거 선택 해제' : '판정 근거로 선택'}
           </Button>
         )}
@@ -3244,7 +3246,13 @@ export function SpecReviewApp() {
                     <div><FileText className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="font-medium">적절한 KCS 후보가 없습니다</p><p className="mt-2 text-sm text-muted-foreground">유사도 25% 미만 후보는 숨기되, 포스코 원문에 KCS 코드가 명시된 경우에는 확인용 후보로 표시합니다. 포스코 고유기준 여부를 검토하세요.</p></div>
                   </div>
                 ) : (
-                  <Tabs value={candidateTab} onValueChange={setCandidateTab}>
+                  <>
+                    {reviewMode === 'business' && decisionReason === 'no_kcs_match' && (
+                      <p className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+                        대응 KCS 없음으로 판정 중입니다. 후보는 비교용으로만 표시되며 판정 근거로 선택되지 않습니다.
+                      </p>
+                    )}
+                    <Tabs value={candidateTab} onValueChange={setCandidateTab}>
                     <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${detail.candidates.length}, minmax(0, 1fr))` }}>
                       {detail.candidates.map((candidate) => <TabsTrigger key={candidate.id} value={candidate.id}>후보 {candidate.rank} · {percent(candidate.score)}</TabsTrigger>)}
                     </TabsList>
@@ -3272,6 +3280,9 @@ export function SpecReviewApp() {
                           analysisAllowed={reviewMode === 'business' && !detail.quality_evaluation}
                           analyzing={analyzingCandidateId === candidate.id}
                           interactionDisabled={detailMutationBusy || reviewMutationLocked}
+                          selectionDisabled={reviewMode === 'business'
+                            && decisionReason === 'no_kcs_match'
+                            && selectedCandidateId !== candidate.id}
                           onAnalyze={() => void analyzeCandidate(candidate.id)}
                           onApplySimplified={reviewMode === 'business'
                             ? (content) => updateDraft(() => setEditedContent(content))
@@ -3280,7 +3291,8 @@ export function SpecReviewApp() {
                         />
                       </TabsContent>
                     ))}
-                  </Tabs>
+                    </Tabs>
+                  </>
                 )}
                 {reviewMode === 'business' && Boolean(detail.excluded_candidates?.length) && (
                   <details className="mt-4 rounded-lg border border-border bg-muted/30 p-4">

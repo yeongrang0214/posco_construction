@@ -719,19 +719,30 @@ export function BulkReview({
                         목차와 구조 제목은 매칭·판정하지 않고, 뒤에 이어지는 문구의 검색 문맥으로만 사용합니다.
                       </div>
                     ) : candidates.length ? (
-                      <div className="grid min-w-0 gap-2 2xl:grid-cols-3">
-                        {candidates.map((candidate) => {
-                          const titleOnly = candidateIsTitleOnly(candidate);
-                          return <CandidateCard
-                            key={candidate.id}
-                            candidate={candidate}
-                            selected={item.selected_candidate_id === candidate.id}
-                            expanded
-                            disabled={rowDecisionBusy || item.decision === 'delete' || (titleOnly && item.selected_candidate_id !== candidate.id)}
-                            onSelect={() => selectCandidate(item, candidate.id)}
-                          />;
-                        })}
-                      </div>
+                      <>
+                        {reason === 'no_kcs_match' && (
+                          <p className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm leading-6 text-blue-900">
+                            대응 KCS 없음으로 판정 중입니다. KCS 후보는 판정 근거로 선택되지 않습니다.
+                          </p>
+                        )}
+                        <div className="grid min-w-0 gap-2 2xl:grid-cols-3">
+                          {candidates.map((candidate) => {
+                            const selected = item.selected_candidate_id === candidate.id;
+                            const titleOnly = candidateIsTitleOnly(candidate);
+                            return <CandidateCard
+                              key={candidate.id}
+                              candidate={candidate}
+                              selected={selected}
+                              expanded
+                              disabled={rowDecisionBusy
+                                || item.decision === 'delete'
+                                || (reason === 'no_kcs_match' && !selected)
+                                || (titleOnly && !selected)}
+                              onSelect={() => selectCandidate(item, candidate.id)}
+                            />;
+                          })}
+                        </div>
+                      </>
                     ) : (
                       <div className="grid min-h-36 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-4 text-center text-sm leading-6 text-muted-foreground">
                         {item.excluded_candidate_count > 0
@@ -803,6 +814,7 @@ export function BulkReview({
             const expanded = expandedIds.has(item.id);
             const saving = savingIds.has(item.id);
             const candidates = (item.candidates || []).slice(0, 3);
+            const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
             const impactNeedsReview = needsKcsImpactReview(item);
             const impactProtected = kcsImpactIsProtected(item);
             const impactStateLabel = kcsImpactStateLabel(item);
@@ -870,25 +882,36 @@ export function BulkReview({
                   <section className="min-w-0">
                     <p className="mb-2 text-xs font-medium text-muted-foreground xl:hidden">KCS 후보 · 최대 3개</p>
                     {candidates.length ? (
-                      <div className={cn(
-                        'grid min-w-0 gap-2',
-                        candidates.length === 1
-                          ? 'xl:grid-cols-1'
-                          : candidates.length === 2
-                            ? 'xl:grid-cols-2'
-                            : 'xl:grid-cols-3',
-                      )}>
-                        {candidates.map((candidate) => (
-                          <CandidateCard
-                            key={candidate.id}
-                            candidate={candidate}
-                            selected={item.selected_candidate_id === candidate.id}
-                            expanded={expanded}
-                            disabled={rowDecisionBusy || item.decision === 'delete' || (candidateIsTitleOnly(candidate) && item.selected_candidate_id !== candidate.id)}
-                            onSelect={() => selectCandidate(item, candidate.id)}
-                          />
-                        ))}
-                      </div>
+                      <>
+                        {reason === 'no_kcs_match' && (
+                          <p className="mb-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">
+                            대응 KCS 없음 · 후보 선택 안 함
+                          </p>
+                        )}
+                        <div className={cn(
+                          'grid min-w-0 gap-2',
+                          candidates.length === 1
+                            ? 'xl:grid-cols-1'
+                            : candidates.length === 2
+                              ? 'xl:grid-cols-2'
+                              : 'xl:grid-cols-3',
+                        )}>
+                          {candidates.map((candidate) => {
+                            const selected = item.selected_candidate_id === candidate.id;
+                            return <CandidateCard
+                              key={candidate.id}
+                              candidate={candidate}
+                              selected={selected}
+                              expanded={expanded}
+                              disabled={rowDecisionBusy
+                                || item.decision === 'delete'
+                                || (reason === 'no_kcs_match' && !selected)
+                                || (candidateIsTitleOnly(candidate) && !selected)}
+                              onSelect={() => selectCandidate(item, candidate.id)}
+                            />;
+                          })}
+                        </div>
+                      </>
                     ) : (
                       <div className="grid min-h-32 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-4 text-center text-sm leading-6 text-muted-foreground">
                         {item.source_type === 'heading'
