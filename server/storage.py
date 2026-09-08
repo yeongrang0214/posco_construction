@@ -5309,7 +5309,11 @@ class Store:
             coverage_confirmed = False
 
         kcs_based_delete = decision == "delete" and decision_reason == KCS_DELETE_REASON
+        no_kcs_match = decision == "keep" and decision_reason == "no_kcs_match"
         if decision == "delete" and not kcs_based_delete:
+            coverage_confirmed = False
+            selected_candidate_id = None
+        if no_kcs_match:
             coverage_confirmed = False
             selected_candidate_id = None
         if (

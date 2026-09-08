@@ -166,6 +166,27 @@ def test_non_kcs_delete_does_not_require_a_candidate(tmp_path):
     assert project["review_submission_ready"] is True
 
 
+def test_no_kcs_match_keep_clears_an_existing_candidate(tmp_path):
+    store, project_id = _store_with_project(tmp_path)
+
+    saved = store.update_decision(
+        project_id,
+        "clause",
+        "keep",
+        "강구조 요구사항을 적용한다.",
+        "",
+        "safe-candidate",
+        decision_reason="no_kcs_match",
+        coverage_confirmed=True,
+    )
+
+    assert saved is not None
+    assert saved["decision"] == "keep"
+    assert saved["decision_reason"] == "no_kcs_match"
+    assert saved["selected_candidate_id"] is None
+    assert saved["coverage_confirmed"] is False
+
+
 def test_management_delete_requires_a_written_reason(tmp_path):
     store, project_id = _store_with_project(tmp_path)
 

@@ -122,7 +122,11 @@ function CandidateCard({
       onClick={onSelect}
       disabled={disabled}
       aria-pressed={selected}
-      title={titleOnly ? '제목만 있는 후보는 삭제 근거로 선택할 수 없습니다.' : '이 후보를 판정 근거로 선택하고 저장'}
+      title={selected
+        ? '선택한 KCS 근거를 해제'
+        : titleOnly
+          ? '제목만 있는 후보는 삭제 근거로 선택할 수 없습니다.'
+          : '이 후보를 판정 근거로 선택하고 저장'}
     >
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 text-xs font-semibold leading-5">후보 {candidate.rank} · {candidate.kcs_code} · {candidate.kcs_clause || '본문'}</span>
@@ -136,7 +140,7 @@ function CandidateCard({
       <p className={cn('mt-1 whitespace-pre-wrap text-sm leading-6 opacity-90', !expanded && 'line-clamp-4')}>{candidate.content}</p>
       <span className="mt-2 flex items-center gap-1 text-xs font-medium">
         {selected ? <Check className="size-3.5" /> : <Circle className="size-3.5" />}
-        {titleOnly ? '삭제 근거 선택 불가' : selected ? '선택됨' : '근거로 선택'}
+        {selected ? '선택 해제' : titleOnly ? '삭제 근거 선택 불가' : '근거로 선택'}
       </span>
     </button>
   );
@@ -479,13 +483,16 @@ export function BulkReview({
     });
   }
 
-  function chooseReason(clauseId: string, reason: string) {
-    setRowReasons((current) => ({ ...current, [clauseId]: reason }));
+  function chooseReason(item: BulkReviewItem, reason: string) {
+    setRowReasons((current) => ({ ...current, [item.id]: reason }));
     setRowErrors((current) => {
       const next = { ...current };
-      delete next[clauseId];
+      delete next[item.id];
       return next;
     });
+    if (reason === 'no_kcs_match' && item.selected_candidate_id) {
+      void saveRow(item, { selected_candidate_id: null });
+    }
   }
 
   function saveDecision(item: BulkReviewItem, decision: Exclude<Decision, null>) {
@@ -501,6 +508,7 @@ export function BulkReview({
       decision,
       decision_reason: reason,
       coverage_confirmed: false,
+      ...(decision === 'keep' && reason === 'no_kcs_match' ? { selected_candidate_id: null } : {}),
       ...kcsImpactAcknowledgement(item),
     });
   }
@@ -546,7 +554,16 @@ export function BulkReview({
   }
 
   function selectCandidate(item: BulkReviewItem, candidateId: string) {
-    void saveRow(item, { selected_candidate_id: candidateId });
+    const selected = item.selected_candidate_id === candidateId;
+    const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
+    if (!selected && reason === 'no_kcs_match') {
+      setRowErrors((current) => ({
+        ...current,
+        [item.id]: 'KCS 후보를 선택하려면 판정 사유를 “대응 KCS 없음”이 아닌 사유로 변경해 주세요.',
+      }));
+      return;
+    }
+    void saveRow(item, { selected_candidate_id: selected ? null : candidateId });
   }
 
   const savingAny = savingIds.size > 0;
@@ -710,7 +727,7 @@ export function BulkReview({
                             candidate={candidate}
                             selected={item.selected_candidate_id === candidate.id}
                             expanded
-                            disabled={rowDecisionBusy || item.decision === 'delete' || titleOnly}
+                            disabled={rowDecisionBusy || item.decision === 'delete' || (titleOnly && item.selected_candidate_id !== candidate.id)}
                             onSelect={() => selectCandidate(item, candidate.id)}
                           />;
                         })}
@@ -753,7 +770,7 @@ export function BulkReview({
                     ) : <>
                       <label className="mb-3 block text-xs font-medium text-muted-foreground">
                         판정 사유
-                        <select className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground" value={reason} onChange={(event) => chooseReason(item.id, event.target.value)} disabled={rowDecisionBusy}>
+                        <select className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground" value={reason} onChange={(event) => chooseReason(item, event.target.value)} disabled={rowDecisionBusy}>
                           <option value="">사유를 선택하세요</option>
                           {(['keep', 'hold', 'delete'] as const).map((decision) => (
                             <optgroup key={decision} label={decision === 'keep' ? '남김' : decision === 'hold' ? '보류' : '삭제'}>
@@ -867,8 +884,8 @@ export function BulkReview({
                             candidate={candidate}
                             selected={item.selected_candidate_id === candidate.id}
                             expanded={expanded}
-                            disabled={rowDecisionBusy || item.decision === 'delete'}
-                            onSelect={() => void saveRow(item, { selected_candidate_id: candidate.id })}
+                            disabled={rowDecisionBusy || item.decision === 'delete' || (candidateIsTitleOnly(candidate) && item.selected_candidate_id !== candidate.id)}
+                            onSelect={() => selectCandidate(item, candidate.id)}
                           />
                         ))}
                       </div>
@@ -897,7 +914,7 @@ export function BulkReview({
                           <select
                             className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground"
                             value={rowReasons[item.id] ?? item.decision_reason ?? ''}
-                            onChange={(event) => chooseReason(item.id, event.target.value)}
+                            onChange={(event) => chooseReason(item, event.target.value)}
                             disabled={rowDecisionBusy}
                           >
                             <option value="">사유를 선택하세요</option>

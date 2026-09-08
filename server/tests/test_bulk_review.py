@@ -396,6 +396,18 @@ def test_quick_review_merges_only_fields_actually_sent(bulk_client):
     assert "source_path" not in quick.json()["project"]
     assert "source_sha256" not in quick.json()["project"]
 
+    no_match = client.patch(
+        f"/api/projects/{project_id}/clauses/{clause_id}/quick-review",
+        json={
+            "decision": "keep",
+            "decision_reason": "no_kcs_match",
+        },
+    )
+    assert no_match.status_code == 200
+    clause = no_match.json()["clause"]
+    assert clause["selected_candidate_id"] is None
+    assert clause["decision_reason"] == "no_kcs_match"
+
     clear_selection = client.patch(
         f"/api/projects/{project_id}/clauses/{clause_id}/quick-review",
         json={"selected_candidate_id": None},

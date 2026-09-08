@@ -925,7 +925,7 @@ function CandidatePanel({
         <span className="text-sm text-muted-foreground">버전 {candidate.version} · 개정 {candidate.update_date || '확인 필요'}</span>
         {showSelection && (
           <Button variant={selected ? 'default' : 'outline'} aria-pressed={selected} onClick={onSelect} disabled={interactionDisabled}>
-            {selected ? <Check /> : <Circle />}{selected ? '판정 근거로 선택됨' : '판정 근거로 선택'}
+            {selected ? <Check /> : <Circle />}{selected ? '판정 근거 선택 해제' : '판정 근거로 선택'}
           </Button>
         )}
       </div>
@@ -1833,6 +1833,7 @@ export function SpecReviewApp() {
     const nextDecision = decisionOverride === undefined ? decision : decisionOverride;
     const nextReason = nextDecision === null ? '' : (reasonOverride ?? decisionReason);
     const kcsBasedDelete = nextDecision === 'delete' && nextReason === 'fully_covered_by_kcs';
+    const noKcsMatch = nextDecision === 'keep' && nextReason === 'no_kcs_match';
     const nextCoverageConfirmed = kcsBasedDelete
       ? (coverageOverride ?? coverageConfirmed)
       : false;
@@ -1864,7 +1865,9 @@ export function SpecReviewApp() {
         review_note: reviewNote,
         decision_reason: nextReason,
         coverage_confirmed: nextCoverageConfirmed,
-        selected_candidate_id: nextDecision === 'delete' && !kcsBasedDelete ? null : selectedCandidateId,
+        selected_candidate_id: (nextDecision === 'delete' && !kcsBasedDelete) || noKcsMatch
+          ? null
+          : selectedCandidateId,
         ...(acknowledgeImpact ? kcsImpactAcknowledgement(detail) : {}),
       });
       if (
@@ -2995,6 +2998,7 @@ export function SpecReviewApp() {
                             onChange={(event) => updateDraft(() => {
                               setDecisionReason(event.target.value);
                               if (event.target.value !== 'fully_covered_by_kcs') setCoverageConfirmed(false);
+                              if (event.target.value === 'no_kcs_match') setSelectedCandidateId(null);
                             })}
                             disabled={detailMutationBusy || reviewMutationLocked}
                           >
@@ -3254,8 +3258,13 @@ export function SpecReviewApp() {
                               setError('삭제 판정을 변경한 뒤 KCS 후보를 다시 선택해 주세요.');
                               return;
                             }
+                            const selected = selectedCandidateId === candidate.id;
+                            if (!selected && decisionReason === 'no_kcs_match') {
+                              setError('KCS 후보를 선택하려면 판정 사유를 “대응 KCS 없음”이 아닌 사유로 변경해 주세요.');
+                              return;
+                            }
                             updateDraft(() => {
-                              setSelectedCandidateId(candidate.id);
+                              setSelectedCandidateId(selected ? null : candidate.id);
                               setCoverageConfirmed(false);
                             });
                           }}
