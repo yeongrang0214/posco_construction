@@ -24,7 +24,6 @@ import { DocxSourceViewer } from '@/components/docx-source-viewer';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Spinner } from '@/components/ui/spinner';
 import {
   api,
@@ -507,24 +506,41 @@ export function BulkReview({
   }
 
   function requestDelete(item: BulkReviewItem) {
-    if (needsKcsImpactReview(item)) {
+    const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
+    if (!isDecisionReason('delete', reason)) {
+      setRowErrors((current) => ({
+        ...current,
+        [item.id]: '삭제 사유를 먼저 선택해 주세요.',
+      }));
+      return;
+    }
+    const kcsBasedDelete = reason === 'fully_covered_by_kcs';
+    if (kcsBasedDelete && needsKcsImpactReview(item)) {
       setRowErrors((current) => ({
         ...current,
         [item.id]: 'KCS가 개정된 조항의 삭제 판정은 상세 비교에서 GPT 전체포괄 분석을 다시 실행한 뒤 재확정해 주세요.',
       }));
       return;
     }
-    if (!item.selected_candidate_id) {
+    if (kcsBasedDelete && !item.selected_candidate_id) {
       setRowErrors((current) => ({
         ...current,
         [item.id]: '삭제 근거로 사용할 KCS 후보를 먼저 선택해 주세요.',
       }));
       return;
     }
+    if (reason === 'management_decision' && !item.review_note.trim()) {
+      setRowErrors((current) => ({
+        ...current,
+        [item.id]: '담당자 판단 삭제는 상세 비교에서 검토의견을 입력한 뒤 저장해 주세요.',
+      }));
+      return;
+    }
     void saveRow(item, {
       decision: 'delete',
-      decision_reason: 'fully_covered_by_kcs',
-      coverage_confirmed: true,
+      decision_reason: reason,
+      coverage_confirmed: kcsBasedDelete,
+      ...(kcsBasedDelete ? {} : { selected_candidate_id: null }),
       ...kcsImpactAcknowledgement(item),
     });
   }
@@ -752,8 +768,9 @@ export function BulkReview({
                         <Button variant={item.decision === 'hold' ? 'secondary' : 'outline'} onClick={() => saveDecision(item, 'hold')} disabled={rowDecisionBusy}><Clock3 />보류</Button>
                       </div>
                       <div className="mt-4 space-y-2 text-xs leading-5 text-muted-foreground">
-                        <p>삭제는 KCS 본문 후보 선택과 전체 포괄 확인이 있어야 저장됩니다.</p>
+                        <p>KCS 중복 삭제만 본문 후보가 필요하며, KCS 외 삭제는 선택한 사유로 기록됩니다.</p>
                         <p>제목 후보는 위치 탐색용이며 삭제 근거로 사용할 수 없습니다.</p>
+                        {reason === 'management_decision' && !item.review_note.trim() && <p className="text-amber-700 dark:text-amber-300">담당자 판단 삭제는 상세 비교에서 검토의견을 입력해야 합니다.</p>}
                         {item.decision && <Badge variant="outline">현재 판정 · {item.decision === 'keep' ? '남김' : item.decision === 'delete' ? '삭제' : '보류'}</Badge>}
                       </div>
                     </>}
@@ -899,7 +916,7 @@ export function BulkReview({
                           <Button variant={item.decision === 'hold' ? 'secondary' : 'outline'} onClick={() => saveDecision(item, 'hold')} disabled={rowDecisionBusy}><Clock3 />{impactNeedsReview && item.decision === 'hold' ? '보류 유지·확인' : '보류'}</Button>
                         </div>
                         <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                          삭제는 선택 KCS와 전체 포괄 확인이 있어야 저장됩니다.
+                          KCS 중복 삭제만 본문 후보가 필요하며, KCS 외 삭제는 선택한 사유로 기록됩니다.
                           {item.decision === 'delete' && ' 후보를 바꾸려면 먼저 남김 또는 보류로 전환하세요.'}
                         </p>
                       </>

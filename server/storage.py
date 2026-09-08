@@ -18,9 +18,19 @@ from .kcs_impact import plan_clause_impact
 from .openai_ai import coverage_source_segments
 
 
+KCS_DELETE_REASON = "fully_covered_by_kcs"
+NON_KCS_DELETE_REASONS = {
+    "internal_duplicate",
+    "obsolete_requirement",
+    "out_of_scope",
+    "editorial_cleanup",
+    "management_decision",
+}
+DELETE_REASONS = {KCS_DELETE_REASON, *NON_KCS_DELETE_REASONS}
+
 DECISION_REASONS = {
     "keep": {"posco_specific", "posco_stricter", "partial_overlap_residual", "no_kcs_match"},
-    "delete": {"fully_covered_by_kcs"},
+    "delete": DELETE_REASONS,
     "hold": {"needs_expert_review", "candidate_uncertain", "kcs_conflict"},
 }
 SAFE_DELETE_RELATIONS = {"equivalent", "kcs_covers"}
@@ -2691,7 +2701,14 @@ class Store:
                     OR (decision = 'keep' AND decision_reason = 'partial_overlap_residual' AND (
                         TRIM(edited_content) = '' OR TRIM(edited_content) = TRIM(content)
                     ))
-                    OR (decision = 'delete' AND decision_reason != 'fully_covered_by_kcs')
+                    OR (decision = 'delete' AND (
+                        decision_reason NOT IN (
+                            'fully_covered_by_kcs', 'internal_duplicate',
+                            'obsolete_requirement', 'out_of_scope',
+                            'editorial_cleanup', 'management_decision'
+                        )
+                        OR (decision_reason = 'management_decision' AND TRIM(review_note) = '')
+                    ))
                     OR (decision = 'hold' AND decision_reason NOT IN (
                         'needs_expert_review', 'candidate_uncertain', 'kcs_conflict'
                     ))
@@ -2706,9 +2723,9 @@ class Store:
             SELECT COUNT(*)
             FROM clauses c
             WHERE c.project_id = ? AND c.source_type != 'heading' AND c.decision = 'delete'
+              AND c.decision_reason = 'fully_covered_by_kcs'
               AND (
                   c.selected_candidate_id IS NULL
-                  OR c.decision_reason != 'fully_covered_by_kcs'
                   OR c.coverage_confirmed != 1
                   OR NOT EXISTS(
                       SELECT 1
@@ -4039,16 +4056,23 @@ class Store:
                                 AND c.decision_reason = 'partial_overlap_residual'
                                 AND (TRIM(c.edited_content) = ''
                                      OR TRIM(c.edited_content) = TRIM(c.content)))
-                            OR (c.decision = 'delete'
-                                AND c.decision_reason != 'fully_covered_by_kcs')
+                            OR (c.decision = 'delete' AND (
+                                c.decision_reason NOT IN (
+                                    'fully_covered_by_kcs', 'internal_duplicate',
+                                    'obsolete_requirement', 'out_of_scope',
+                                    'editorial_cleanup', 'management_decision'
+                                )
+                                OR (c.decision_reason = 'management_decision'
+                                    AND TRIM(c.review_note) = '')
+                            ))
                             OR (c.decision = 'hold' AND c.decision_reason NOT IN (
                                 'needs_expert_review', 'candidate_uncertain', 'kcs_conflict'
                             ))
                         ) THEN 1 ELSE 0 END) AS invalid_decisions,
                         SUM(CASE WHEN c.source_type != 'heading' AND c.decision = 'delete'
+                          AND c.decision_reason = 'fully_covered_by_kcs'
                           AND (
                               c.selected_candidate_id IS NULL
-                              OR c.decision_reason != 'fully_covered_by_kcs'
                               OR c.coverage_confirmed != 1
                               OR NOT EXISTS(
                                   SELECT 1
@@ -5284,6 +5308,17 @@ class Store:
         elif decision != "delete":
             coverage_confirmed = False
 
+        kcs_based_delete = decision == "delete" and decision_reason == KCS_DELETE_REASON
+        if decision == "delete" and not kcs_based_delete:
+            coverage_confirmed = False
+            selected_candidate_id = None
+        if (
+            decision == "delete"
+            and decision_reason == "management_decision"
+            and not review_note.strip()
+        ):
+            raise ValueError("담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.")
+
         if decision == "keep" and decision_reason == "partial_overlap_residual":
             residual = " ".join(edited_content.split())
             original = " ".join(
@@ -5314,7 +5349,7 @@ class Store:
             ):
                 raise ValueError("관련성 낮음으로 제외된 KCS 후보는 판정 근거로 선택할 수 없습니다.")
 
-        if decision == "delete":
+        if kcs_based_delete:
             if not selected_candidate:
                 raise ValueError("삭제하려면 전체 요구사항을 포함하는 KCS 근거를 먼저 선택해 주세요.")
             candidate_title = " ".join(str(selected_candidate["title"] or "").split())

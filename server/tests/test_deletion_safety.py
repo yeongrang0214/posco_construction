@@ -141,6 +141,63 @@ def test_decision_reason_heading_and_delete_gate(tmp_path):
     assert project["review_submission_ready"] is True
 
 
+def test_non_kcs_delete_does_not_require_a_candidate(tmp_path):
+    store, project_id = _store_with_project(tmp_path)
+
+    saved = store.update_decision(
+        project_id,
+        "clause",
+        "delete",
+        "",
+        "사내 시방서의 다른 조항과 중복됨",
+        "safe-candidate",
+        decision_reason="internal_duplicate",
+        coverage_confirmed=True,
+    )
+
+    assert saved is not None
+    assert saved["decision_reason"] == "internal_duplicate"
+    assert saved["selected_candidate_id"] is None
+    assert saved["coverage_confirmed"] is False
+    project = store.get_project(project_id)
+    assert project is not None
+    assert project["unsafe_delete_count"] == 0
+    assert project["invalid_decision_count"] == 0
+    assert project["review_submission_ready"] is True
+
+
+def test_management_delete_requires_a_written_reason(tmp_path):
+    store, project_id = _store_with_project(tmp_path)
+
+    with pytest.raises(ValueError, match="검토의견"):
+        store.update_decision(
+            project_id,
+            "clause",
+            "delete",
+            "",
+            "",
+            None,
+            decision_reason="management_decision",
+        )
+
+    saved = store.update_decision(
+        project_id,
+        "clause",
+        "delete",
+        "",
+        "현장 운영 범위에서 제외하기로 협의함",
+        None,
+        decision_reason="management_decision",
+    )
+
+    assert saved is not None
+    assert saved["decision_reason"] == "management_decision"
+    project = store.get_project(project_id)
+    assert project is not None
+    assert project["invalid_decision_count"] == 0
+    assert project["review_submission_ready"] is True
+
+
 def test_final_export_blocks_until_ready_and_removes_review_metadata(tmp_path, monkeypatch):
     store, project_id = _store_with_project(tmp_path)
     monkeypatch.setattr(app_module, "store", store)
