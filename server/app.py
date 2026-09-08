@@ -1829,7 +1829,11 @@ def export_docx(project_id: str, kind: Literal["review", "final"]):
         project, clauses = bundle
     else:
         project = _project_or_404(project_id)
-        clauses = store.export_clauses(project_id, ("keep", "hold"))
+        clauses = store.export_clauses(
+            project_id,
+            ("keep", "hold"),
+            include_unreviewed=True,
+        )
 
     if kind == "final" and not project["final_export_ready"]:
         blockers = ", ".join(project["final_export_blockers"])
@@ -1840,11 +1844,10 @@ def export_docx(project_id: str, kind: Literal["review", "final"]):
     if kind == "review" and not clauses:
         raise HTTPException(
             status_code=400,
-            detail="초안에 포함할 남김 또는 보류 조항이 없습니다.",
+            detail="간소화 시방서에 포함할 삭제 제외 조항이 없습니다.",
         )
     data = build_review_docx(project, clauses, kind)
-    suffix = "남김보류_초안" if kind == "review" else "승인최종"
-    filename = f"{safe_filename(project['title'])}_{suffix}_간소화시방서.docx"
+    filename = f"{safe_filename(project['title'])}_간소화시방서.docx"
     return _download_response(
         data,
         filename,

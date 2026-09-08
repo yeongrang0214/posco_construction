@@ -675,10 +675,14 @@ export function BulkReview({
             const impactProtected = kcsImpactIsProtected(item);
             const rowDecisionBusy = interactionBusy || impactProtected || reviewLocked;
             const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
+            const hasPreviousClause = activeMapIndex > 0
+              && documentMap.slice(0, activeMapIndex).some((entry) => entry.source_type !== 'heading');
+            const hasNextClause = activeMapIndex >= 0
+              && documentMap.slice(activeMapIndex + 1).some((entry) => entry.source_type !== 'heading');
             return (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-xs">
-                  <Button size="sm" variant="outline" onClick={() => moveActive(-1)} disabled={rowDecisionBusy || activeMapIndex <= 0}><ArrowLeft />이전</Button>
+                  <Button size="sm" variant="outline" onClick={() => moveActive(-1)} disabled={rowDecisionBusy || !hasPreviousClause}><ArrowLeft />이전</Button>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="truncate text-sm font-semibold">{item.label} · {item.title}</p>
@@ -693,7 +697,7 @@ export function BulkReview({
                     <Button size="sm" variant="outline" onClick={() => onMergeNext(item)} disabled={rowDecisionBusy}><Combine />다음과 합치기</Button>
                   </>}
                   <Button size="sm" variant="outline" onClick={() => onOpenDetail(item.id)} disabled={interactionBusy}><ExternalLink />상세 비교</Button>
-                  <Button size="sm" variant="outline" onClick={() => moveActive(1)} disabled={rowDecisionBusy || activeMapIndex < 0 || activeMapIndex >= documentMap.length - 1}>다음<ArrowRight /></Button>
+                  <Button size="sm" variant="outline" onClick={() => moveActive(1)} disabled={rowDecisionBusy || !hasNextClause}>다음<ArrowRight /></Button>
                 </div>
 
                 {rowErrors[item.id] && <p role="alert" className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"><AlertTriangle className="mt-0.5 size-4 shrink-0" />{rowErrors[item.id]}</p>}
@@ -771,6 +775,17 @@ export function BulkReview({
                           {!!selectedCandidate.warnings?.length && <p className="flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-900"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{selectedCandidate.warnings.join(' · ')}</p>}
                         </div>
                       ) : <p className="py-6 text-center text-sm text-muted-foreground">KCS 본문 후보를 선택하면 차이를 표시합니다.</p>}
+                    </div>
+                    <div className="sticky bottom-0 z-10 -mx-3 -mb-3 mt-3 flex items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_18px_rgba(15,23,42,0.08)] backdrop-blur">
+                      <Button size="sm" variant="outline" onClick={() => moveActive(-1)} disabled={rowDecisionBusy || !hasPreviousClause}>
+                        <ArrowLeft />이전 문구
+                      </Button>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {activeMapIndex + 1} / {documentMap.length}
+                      </span>
+                      <Button size="sm" variant="outline" onClick={() => moveActive(1)} disabled={rowDecisionBusy || !hasNextClause}>
+                        다음 문구<ArrowRight />
+                      </Button>
                     </div>
                   </section>
 

@@ -6422,8 +6422,17 @@ class Store:
             item["score_band"] = self._score_band(item)
         return result
 
-    def export_clauses(self, project_id: str, decisions: tuple[str, ...]) -> list[dict[str, Any]]:
+    def export_clauses(
+        self,
+        project_id: str,
+        decisions: tuple[str, ...],
+        *,
+        include_unreviewed: bool = False,
+    ) -> list[dict[str, Any]]:
         placeholders = ",".join("?" for _ in decisions)
+        decision_filter = f"c.decision IN ({placeholders})"
+        if include_unreviewed:
+            decision_filter = f"({decision_filter} OR c.decision IS NULL)"
         with self.connect() as connection:
             rows = connection.execute(
                 f"""
@@ -6433,7 +6442,7 @@ class Store:
                 FROM clauses c
                 LEFT JOIN candidates k ON k.id = c.selected_candidate_id
                 WHERE c.project_id = ? AND c.source_type != 'heading'
-                  AND c.decision IN ({placeholders})
+                  AND {decision_filter}
                 ORDER BY c.source_order
                 """,
                 (project_id, *decisions),

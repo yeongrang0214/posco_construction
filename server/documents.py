@@ -14,9 +14,9 @@ from typing import Any, Iterable
 
 from docx import Document
 from docx.document import Document as DocumentObject
-from docx.enum.text import WD_COLOR_INDEX
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from openpyxl import Workbook
@@ -753,56 +753,72 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
 
 def build_review_docx(project: dict[str, Any], clauses: list[dict[str, Any]], kind: str) -> bytes:
     document = Document()
+    korean_font = "맑은 고딕"
+    style_settings = {
+        "Normal": (10.5, False),
+        "Title": (20, True),
+        "Heading 1": (15, True),
+        "Heading 2": (13, True),
+        "Heading 3": (11.5, True),
+        "Quote": (10, False),
+    }
+    for style_name, (size, bold) in style_settings.items():
+        style = document.styles[style_name]
+        style.font.name = korean_font
+        style.font.size = Pt(size)
+        style.font.bold = bold
+        style.font.color.rgb = RGBColor(0, 0, 0)
+        fonts = style.element.get_or_add_rPr().get_or_add_rFonts()
+        for attribute in ("ascii", "hAnsi", "eastAsia", "cs"):
+            fonts.set(qn(f"w:{attribute}"), korean_font)
+
+    title_properties = document.styles["Title"].element.get_or_add_pPr()
+    title_border = title_properties.find(qn("w:pBdr"))
+    if title_border is not None:
+        title_properties.remove(title_border)
+
+    normal_format = document.styles["Normal"].paragraph_format
+    normal_format.line_spacing = 1.35
+    normal_format.space_after = Pt(5)
+    for level in range(1, 4):
+        heading_format = document.styles[f"Heading {level}"].paragraph_format
+        heading_format.space_before = Pt(10 if level == 1 else 8)
+        heading_format.space_after = Pt(4)
+        heading_format.keep_with_next = True
+
+    section = document.sections[0]
+    section.top_margin = Cm(2.2)
+    section.bottom_margin = Cm(2.2)
+    section.left_margin = Cm(2.4)
+    section.right_margin = Cm(2.4)
+    document.core_properties.title = clean_text(project["title"])
+
     heading = document.add_heading(project["title"], level=0)
     heading.style = document.styles["Title"]
-    subtitle = document.add_paragraph()
-    subtitle.add_run("간소화 초안 시방서 (남김·보류)" if kind == "review" else "KCS 보완·특기 시방서").bold = True
-    if kind == "review":
-        document.add_paragraph(f"원본: {project['source_filename']}")
-        document.add_paragraph(f"비교 KCS 스냅샷: {project['kcs_snapshot']} / 범위: {project['kcs_scope']}")
-        notice = document.add_paragraph(
-            "이 초안은 남김·보류 조항을 포함하고 삭제 조항을 제외합니다. "
-            "보류 조항은 최종 승인 전까지 현장 적용 기준으로 사용할 수 없습니다."
-        )
-        notice.runs[0].font.highlight_color = WD_COLOR_INDEX.YELLOW
-    else:
-        document.add_paragraph(f"적용 KCS 기준: {project['kcs_snapshot']}")
-        document.add_paragraph(
-            "KCS와 중복되지 않아 유지하기로 확정한 포스코 추가·강화 기준만 수록합니다."
-        )
-
-    document.add_page_break()
+    heading.paragraph_format.space_after = Pt(8)
     for clause in clauses:
-        label_title = clean_text(f"{clause['label']} {clause['title']}")
-        level = min(3, max(1, clause.get("outline_level") or 2))
-        clause_heading = document.add_heading(label_title, level=level)
-        if clause["decision"] == "hold":
-            prefix = clause_heading.insert_paragraph_before("[보류]")
-            prefix.runs[0].bold = True
-            prefix.runs[0].font.highlight_color = WD_COLOR_INDEX.YELLOW
-
         edited_content = clean_text(clause.get("edited_content"))
-        original_content = clean_text(clause.get("content") or clause.get("title"))
+        original_title = clean_text(clause.get("title"))
+        original_body = clean_text(clause.get("content"))
+        original_content = original_title if not original_body or original_body == original_title else clean_text(
+            f"{original_title} {original_body}"
+        )
         if kind == "final" and clause.get("decision_reason") == "partial_overlap_residual":
             if not edited_content or edited_content == original_content:
                 raise ValueError(
                     "부분 중복 잔여기준의 수정문이 없어 최종 문서를 생성할 수 없습니다."
                 )
         final_content = edited_content or original_content
-        if final_content and final_content != clause["title"]:
-            document.add_paragraph(final_content)
-        if kind == "review" and clause.get("kcs_code"):
-            reference = document.add_paragraph(
-                f"연결 KCS: {clause['kcs_code']} {clause.get('kcs_clause') or ''} · {clause.get('kcs_document_name') or ''}"
-            )
-            for run in reference.runs:
-                run.italic = True
-        if kind == "review" and clause.get("review_note"):
-            note = document.add_paragraph(f"검토의견: {clause['review_note']}")
-            note.style = document.styles["Quote"]
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_before = Pt(6)
+        paragraph.paragraph_format.space_after = Pt(6)
+        label = clean_text(clause.get("label"))
+        if label:
+            paragraph.add_run(f"{label} ").bold = True
+        paragraph.add_run(final_content)
 
     if kind == "final" and not clauses:
-        document.add_paragraph("검토 결과 별도로 유지할 포스코 추가·강화 조항이 없습니다.")
+        document.add_paragraph("별도로 유지할 포스코 추가·강화 조항이 없습니다.")
 
     output = io.BytesIO()
     document.save(output)

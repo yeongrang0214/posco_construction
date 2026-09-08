@@ -56,16 +56,18 @@ function findBestElements(
   target: string,
   candidates: RenderedCandidate[],
   sourceType: DocumentMapItem['source_type'],
+  endExclusive = candidates.length,
 ) {
-  let best: { elements: HTMLElement[]; score: number; lengthDelta: number } | null = null;
-  const isBetter = (score: number, lengthDelta: number, elementCount: number) => (
+  let best: { elements: HTMLElement[]; score: number; lengthDelta: number; startIndex: number } | null = null;
+  const isBetter = (score: number, lengthDelta: number, elementCount: number, startIndex: number) => (
     !best
     || score > best.score
     || (score === best.score && lengthDelta < best.lengthDelta)
     || (score === best.score && lengthDelta === best.lengthDelta && elementCount < best.elements.length)
+    || (score === best.score && lengthDelta === best.lengthDelta && elementCount === best.elements.length && startIndex > best.startIndex)
   );
 
-  for (let start = 0; start < candidates.length; start += 1) {
+  for (let start = 0; start < endExclusive; start += 1) {
     const first = candidates[start];
     const isTableRow = first.element.tagName === 'TR';
     if (first.element.dataset.clauseId) continue;
@@ -74,23 +76,23 @@ function findBestElements(
     if (isTableRow) {
       const score = matchScore(target, first.text);
       const lengthDelta = Math.abs(target.length - first.text.length);
-      if (isBetter(score, lengthDelta, 1)) {
-        best = { elements: [first.element], score, lengthDelta };
+      if (isBetter(score, lengthDelta, 1, start)) {
+        best = { elements: [first.element], score, lengthDelta, startIndex: start };
       }
       continue;
     }
 
     let rendered = '';
     const elements: HTMLElement[] = [];
-    for (let index = start; index < candidates.length && elements.length < 24; index += 1) {
+    for (let index = start; index < endExclusive && elements.length < 24; index += 1) {
       const candidate = candidates[index];
       if (candidate.element.tagName === 'TR' || candidate.element.dataset.clauseId) break;
       rendered += candidate.text;
       elements.push(candidate.element);
       const score = matchScore(target, rendered);
       const lengthDelta = Math.abs(target.length - rendered.length);
-      if (isBetter(score, lengthDelta, elements.length)) {
-        best = { elements: [...elements], score, lengthDelta };
+      if (isBetter(score, lengthDelta, elements.length, start)) {
+        best = { elements: [...elements], score, lengthDelta, startIndex: start };
       }
       if (rendered.length > target.length * 1.6) break;
     }
@@ -213,11 +215,12 @@ export function DocxSourceViewer({
       delete element.dataset.clauseId;
     }
 
-    for (const clause of clauses) {
+    let cursor = candidates.length;
+    for (const clause of [...clauses].reverse()) {
       if (clause.source_type === 'heading') continue;
       const target = clauseSearchText(clause);
       if (target.length < 2) continue;
-      const best = findBestElements(target, candidates, clause.source_type);
+      const best = findBestElements(target, candidates, clause.source_type, cursor);
       if (!best || best.score < 0.56) continue;
       for (const element of best.elements) {
         element.dataset.clauseId = clause.id;
@@ -226,6 +229,7 @@ export function DocxSourceViewer({
         if (clause.id === activeClauseId) element.classList.add('spec-source-active');
       }
       nextMap.set(clause.id, best.elements);
+      cursor = best.startIndex;
     }
     elementMapRef.current = nextMap;
   }, [activeClauseId, clauses, error, loading]);
@@ -249,11 +253,24 @@ export function DocxSourceViewer({
     if (!body) return;
     const handleClick = (event: MouseEvent) => {
       const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-clause-id]');
-      if (target?.dataset.clauseId) onSelectClause(target.dataset.clauseId);
+      if (target?.dataset.clauseId) {
+        onSelectClause(target.dataset.clauseId);
+        return;
+      }
+
+      const renderedElement = (event.target as HTMLElement | null)?.closest<HTMLElement>('p, tr');
+      if (!renderedElement || (renderedElement.tagName === 'P' && renderedElement.closest('tr'))) return;
+      const renderedText = normalized(renderedElement.innerText || renderedElement.textContent || '');
+      const sourceType = renderedElement.tagName === 'TR' ? 'table' : 'paragraph';
+      const fallback = clauses
+        .filter((clause) => clause.source_type === sourceType)
+        .map((clause) => ({ clause, score: matchScore(clauseSearchText(clause), renderedText) }))
+        .sort((left, right) => right.score - left.score)[0];
+      if (fallback && fallback.score >= 0.56) onSelectClause(fallback.clause.id);
     };
     body.addEventListener('click', handleClick);
     return () => body.removeEventListener('click', handleClick);
-  }, [onSelectClause]);
+  }, [clauses, onSelectClause]);
 
   const activeIndex = useMemo(
     () => clauses.findIndex((clause) => clause.id === activeClauseId),

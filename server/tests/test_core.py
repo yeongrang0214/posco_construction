@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from docx import Document
+from docx.oxml.ns import qn
 from openpyxl import load_workbook
 
 from server.documents import build_audit_xlsx, build_review_docx, parse_docx, sha256_bytes
@@ -153,10 +154,37 @@ def test_parse_match_review_and_export(tmp_path):
     assert store.get_project(project_id)["reviewed_clauses"] == 1
 
     export_rows = store.export_clauses(project_id, ("keep", "hold"))
+    deleted_clause_id = next(
+        clause["id"]
+        for clause in clauses
+        if clause["source_type"] != "heading" and clause["id"] != matched["id"]
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE clauses SET decision = 'delete' WHERE id = ?",
+            (deleted_clause_id,),
+        )
+    unreviewed_export_rows = store.export_clauses(
+        project_id,
+        ("keep", "hold"),
+        include_unreviewed=True,
+    )
+    assert len(unreviewed_export_rows) > len(export_rows)
+    assert any(row["decision"] is None for row in unreviewed_export_rows)
+    assert all(row["decision"] != "delete" for row in unreviewed_export_rows)
+    assert deleted_clause_id not in {row["id"] for row in unreviewed_export_rows}
     review_bytes = build_review_docx(project, export_rows, "review")
     review_doc = Document(io.BytesIO(review_bytes))
-    assert "[보류]" in "\n".join(paragraph.text for paragraph in review_doc.paragraphs)
-    assert "포스코 추가 기준" in "\n".join(paragraph.text for paragraph in review_doc.paragraphs)
+    review_text = "\n".join(paragraph.text for paragraph in review_doc.paragraphs)
+    assert "포스코 추가 기준" in review_text
+    assert "[보류]" not in review_text
+    assert "연결 KCS" not in review_text
+    assert "검토의견" not in review_text
+    assert "원본 파일" not in review_text
+    assert all(paragraph.style.name in {"Title", "Normal"} for paragraph in review_doc.paragraphs)
+    assert review_doc.styles["Normal"].element.rPr.rFonts.get(qn("w:eastAsia")) == "맑은 고딕"
+    assert review_doc.styles["Title"].element.pPr.find(qn("w:pBdr")) is None
+    assert not any(paragraph._p.xpath(".//w:br[@w:type='page']") for paragraph in review_doc.paragraphs)
 
     audit_bytes = build_audit_xlsx(project, store.audit_rows(project_id))
     workbook = load_workbook(io.BytesIO(audit_bytes))
