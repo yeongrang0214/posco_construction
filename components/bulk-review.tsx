@@ -211,7 +211,6 @@ export function BulkReview({
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [rowReasons, setRowReasons] = useState<Record<string, string>>({});
   const [pendingDelete, setPendingDelete] = useState<BulkReviewItem | null>(null);
-  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [documentMap, setDocumentMap] = useState<DocumentMapItem[]>([]);
@@ -534,7 +533,6 @@ export function BulkReview({
       return;
     }
     setPendingDelete(item);
-    setDeleteConfirmed(false);
   }
 
   function selectCandidate(item: BulkReviewItem, candidateId: string) {
@@ -931,7 +929,6 @@ export function BulkReview({
         onOpenChange={(open) => {
           if (!open && !savingAny && !structureBusy) {
             setPendingDelete(null);
-            setDeleteConfirmed(false);
           }
         }}
       >
@@ -950,17 +947,16 @@ export function BulkReview({
               </p>
             </div>
           )}
-          <div className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm leading-6">
-            <Checkbox id="bulk-delete-confirm" checked={deleteConfirmed} onCheckedChange={setDeleteConfirmed} className="mt-1" />
-            <label htmlFor="bulk-delete-confirm">포스코 요구사항 전체가 선택 KCS에 포함되고, 수치·의무·금지·예외 차이가 없음을 확인했습니다.</label>
-          </div>
+          <p className="rounded-lg border border-border p-3 text-sm leading-6">
+            삭제 판정 저장을 누르면 포스코 요구사항 전체가 선택 KCS에 포함되고, 수치·의무·금지·예외 차이가 없음을 확인한 것으로 처리됩니다.
+          </p>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={savingAny || structureBusy}>취소</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={!deleteConfirmed || savingAny || structureBusy}
+              disabled={savingAny || structureBusy}
               onClick={async () => {
-                if (!pendingDelete || !deleteConfirmed) return;
+                if (!pendingDelete) return;
                 const saved = await saveRow(pendingDelete, {
                   decision: 'delete',
                   decision_reason: 'fully_covered_by_kcs',
@@ -969,7 +965,6 @@ export function BulkReview({
                 });
                 if (saved) {
                   setPendingDelete(null);
-                  setDeleteConfirmed(false);
                 }
               }}
             >

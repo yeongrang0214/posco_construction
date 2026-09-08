@@ -986,7 +986,6 @@ export function SpecReviewApp() {
   const [decisionReason, setDecisionReason] = useState('');
   const [coverageConfirmed, setCoverageConfirmed] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteConfirmationChecked, setDeleteConfirmationChecked] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [candidateTab, setCandidateTab] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -1271,7 +1270,6 @@ export function SpecReviewApp() {
         setDecisionReason(clause.decision_reason || '');
         setCoverageConfirmed(Boolean(clause.coverage_confirmed));
         setDeleteDialogOpen(false);
-        setDeleteConfirmationChecked(false);
         setSelectedCandidateId(clause.selected_candidate_id);
         const preferredCandidateId = qualityItem?.relevant_candidate_id;
         setCandidateTab(
@@ -2060,7 +2058,6 @@ export function SpecReviewApp() {
         setError('GPT 전체포괄 분석에서 실제 근거로 사용된 KCS 후보를 선택해 주세요.');
         return;
       }
-      setDeleteConfirmationChecked(false);
       setDeleteDialogOpen(true);
       return;
     }
@@ -3576,7 +3573,6 @@ export function SpecReviewApp() {
         onOpenChange={(open) => {
           if (!open && !saving) {
             setDeleteDialogOpen(false);
-            setDeleteConfirmationChecked(false);
           }
         }}
       >
@@ -3595,20 +3591,18 @@ export function SpecReviewApp() {
               </p>
             </div>
           )}
-          <div className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm leading-6">
-            <Checkbox id="detail-delete-confirm" checked={deleteConfirmationChecked} onCheckedChange={setDeleteConfirmationChecked} className="mt-1" />
-            <label htmlFor="detail-delete-confirm">수치·적용 조건·예외·시험 빈도·책임·의무 및 금지 표현을 포함한 포스코 요구사항 전체가 근거 KCS에 포함됨을 확인했습니다.</label>
-          </div>
+          <p className="rounded-lg border border-border p-3 text-sm leading-6">
+            삭제 판정 저장을 누르면 수치·적용 조건·예외·시험 빈도·책임·의무 및 금지 표현을 포함한 포스코 요구사항 전체가 근거 KCS에 포함됨을 확인한 것으로 처리됩니다.
+          </p>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={detailMutationBusy}>취소</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={!deleteConfirmationChecked || detailMutationBusy}
+              disabled={detailMutationBusy}
               onClick={async () => {
                 const saved = await saveCurrent('delete', true, 'fully_covered_by_kcs', true);
                 if (saved) {
                   setDeleteDialogOpen(false);
-                  setDeleteConfirmationChecked(false);
                 }
               }}
             >
