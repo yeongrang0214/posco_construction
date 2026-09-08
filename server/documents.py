@@ -756,11 +756,14 @@ def build_review_docx(project: dict[str, Any], clauses: list[dict[str, Any]], ki
     heading = document.add_heading(project["title"], level=0)
     heading.style = document.styles["Title"]
     subtitle = document.add_paragraph()
-    subtitle.add_run("검토용 간소화 시방서" if kind == "review" else "KCS 보완·특기 시방서").bold = True
+    subtitle.add_run("간소화 초안 시방서 (남김·보류)" if kind == "review" else "KCS 보완·특기 시방서").bold = True
     if kind == "review":
         document.add_paragraph(f"원본: {project['source_filename']}")
         document.add_paragraph(f"비교 KCS 스냅샷: {project['kcs_snapshot']} / 범위: {project['kcs_scope']}")
-        notice = document.add_paragraph("보류 조항은 최종 승인 전까지 현장 적용 기준으로 사용할 수 없습니다.")
+        notice = document.add_paragraph(
+            "이 초안은 남김·보류 조항을 포함하고 삭제 조항을 제외합니다. "
+            "보류 조항은 최종 승인 전까지 현장 적용 기준으로 사용할 수 없습니다."
+        )
         notice.runs[0].font.highlight_color = WD_COLOR_INDEX.YELLOW
     else:
         document.add_paragraph(f"적용 KCS 기준: {project['kcs_snapshot']}")

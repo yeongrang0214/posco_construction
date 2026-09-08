@@ -2438,7 +2438,12 @@ export function SpecReviewApp() {
     && Boolean(config?.kcs_available)
     && !kcsRematchBlocksFinal
     && !artifactDownloadBlocked;
-  const finalDownloadBlockers = [
+  const draftIncludedCount = Number(project?.keep_count || 0) + Number(project?.hold_count || 0);
+  const draftDownloadReady = draftIncludedCount > 0 && !artifactDownloadBlocked;
+  const draftDownloadBlockMessage = artifactDownloadBlocked
+    ? artifactDownloadBlockMessage
+    : '남김 또는 보류로 판정한 조항이 있어야 초안 DOCX를 만들 수 있습니다.';
+  const finalDownloadBlockers = Array.from(new Set([
     ...(project?.final_export_blockers || []),
     ...(!config?.kcs_available ? ['최신 KCS 상태를 먼저 확인하세요.'] : []),
     ...(kcsRematchActive ? ['KCS 영향 분석과 자동 재매칭이 진행 중입니다.'] : []),
@@ -2450,7 +2455,7 @@ export function SpecReviewApp() {
     ...(detailMutationBusy ? ['현재 조항의 저장·구조 편집·GPT 분석·후보 복원이 끝난 뒤 내려받으세요.'] : []),
     ...(bulkSaving ? ['일괄 저장이 끝난 뒤 내려받으세요.'] : []),
     ...(syncingKcs ? ['KCS 갱신이 끝난 뒤 내려받으세요.'] : []),
-  ];
+  ]));
   const qualityInsights = qualityEvaluation?.insights || null;
   const qualityErrorSignals = qualityInsights?.error_signals || null;
   const qualityCohortRows = normalizeInsightRows(qualityInsights?.cohorts ?? qualityInsights?.cohort_rows, 'cohort');
@@ -2530,13 +2535,13 @@ export function SpecReviewApp() {
             {artifactDownloadBlocked
               ? <Button variant="outline" disabled title={artifactDownloadBlockMessage}><FileSpreadsheet />판정·KCS 이력</Button>
               : <a className={buttonVariants({ variant: 'outline' })} href={api.auditUrl(project.id)}><FileSpreadsheet />판정·KCS 이력</a>}
-            {artifactDownloadBlocked
-              ? <Button variant="outline" disabled title={artifactDownloadBlockMessage}><FileDown />검토용 DOCX</Button>
-              : <a className={buttonVariants({ variant: 'outline' })} href={api.exportUrl(project.id, 'review')}><FileDown />검토용 DOCX</a>}
+            {draftDownloadReady
+              ? <a className={buttonVariants({ variant: 'outline' })} href={api.exportUrl(project.id, 'review')} title="남김·보류 조항 포함, 삭제 조항 제외"><FileDown />간소화 초안 DOCX</a>
+              : <Button variant="outline" disabled title={draftDownloadBlockMessage}><FileDown />간소화 초안 DOCX</Button>}
             {finalDownloadReady ? (
-              <a className={buttonVariants()} href={api.exportUrl(project.id, 'final')}><Download />최종 DOCX</a>
+              <a className={buttonVariants()} href={api.exportUrl(project.id, 'final')}><Download />승인 최종 DOCX</a>
             ) : (
-              <Button disabled aria-describedby="final-download-status" title={finalDownloadBlockers.join(', ') || '최종 출력 조건 미충족'}><Download />최종 DOCX</Button>
+              <Button disabled aria-describedby="final-download-status" title={finalDownloadBlockers.join(', ') || '최종 출력 조건 미충족'}><Download />승인 최종 DOCX</Button>
             )}
           </div>
         </div>
@@ -2555,11 +2560,33 @@ export function SpecReviewApp() {
         {!finalDownloadReady && (
           <Alert className="mb-4">
             <AlertTriangle />
-            <AlertTitle>최종 DOCX 생성 전 확인이 필요합니다</AlertTitle>
-            <AlertDescription id="final-download-status">
-              {(finalDownloadBlockers.length
-                ? finalDownloadBlockers
-                : ['최종 출력 조건을 아직 충족하지 않았습니다.']).join(' · ')}
+            <AlertTitle>{draftDownloadReady ? '간소화 초안은 지금 내려받을 수 있습니다' : 'DOCX 생성 전 확인이 필요합니다'}</AlertTitle>
+            <AlertDescription id="final-download-status" className="space-y-3">
+              {draftDownloadReady ? (
+                <p>
+                  초안에는 남김 {project.keep_count}건과 보류 {project.hold_count}건이 포함되고 삭제 {project.delete_count}건은 제외됩니다.
+                  {' '}승인 최종본은 보류를 확정하고 검토 제출·승인을 마친 뒤 생성됩니다.
+                </p>
+              ) : (
+                <p>{draftDownloadBlockMessage}</p>
+              )}
+              <p>
+                <strong>승인 최종본 남은 단계:</strong>{' '}
+                {(finalDownloadBlockers.length
+                  ? finalDownloadBlockers
+                  : ['최종 출력 조건을 아직 충족하지 않았습니다.']).join(' · ')}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {draftDownloadReady && (
+                  <a className={buttonVariants({ variant: 'outline', size: 'sm' })} href={api.exportUrl(project.id, 'review')}><FileDown />간소화 초안 다운로드</a>
+                )}
+                {project.review_submission_ready && ['reviewing', 'changes_requested'].includes(project.status) && (
+                  <Button size="sm" onClick={() => openReviewWorkflow('submit')} disabled={reviewWorkflowBusy || artifactDownloadBlocked}><Send />검토 제출</Button>
+                )}
+                {project.status === 'submitted' && (
+                  <Button size="sm" onClick={() => openReviewWorkflow('decision')} disabled={reviewWorkflowBusy || artifactDownloadBlocked}><ShieldCheck />승인 처리</Button>
+                )}
+              </div>
             </AlertDescription>
           </Alert>
         )}

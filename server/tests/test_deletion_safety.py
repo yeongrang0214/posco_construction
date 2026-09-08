@@ -252,6 +252,8 @@ def test_final_export_blocks_until_ready_and_removes_review_metadata(tmp_path, m
         review = client.get(f"/api/projects/{project_id}/export/review")
         review_document = Document(io.BytesIO(review.content))
         review_text = "\n".join(paragraph.text for paragraph in review_document.paragraphs)
+        assert "간소화 초안 시방서 (남김·보류)" in review_text
+        assert "남김·보류 조항을 포함하고 삭제 조항을 제외합니다." in review_text
         assert "연결 KCS" in review_text
         assert "내부 검토 메모" in review_text
 

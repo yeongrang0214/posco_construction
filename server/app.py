@@ -1838,9 +1838,12 @@ def export_docx(project_id: str, kind: Literal["review", "final"]):
             detail=f"최종 DOCX 생성 조건을 충족하지 않았습니다: {blockers}",
         )
     if kind == "review" and not clauses:
-        raise HTTPException(status_code=400, detail="남김 또는 보류로 판정된 조항이 없습니다.")
+        raise HTTPException(
+            status_code=400,
+            detail="초안에 포함할 남김 또는 보류 조항이 없습니다.",
+        )
     data = build_review_docx(project, clauses, kind)
-    suffix = "검토용" if kind == "review" else "최종"
+    suffix = "남김보류_초안" if kind == "review" else "승인최종"
     filename = f"{safe_filename(project['title'])}_{suffix}_간소화시방서.docx"
     return _download_response(
         data,
