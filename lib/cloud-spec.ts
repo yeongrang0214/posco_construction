@@ -32,6 +32,18 @@ const DISCIPLINE_SCOPES: Array<[string[], string[]]> = [
   [['방수'], ['4140']],
 ];
 
+const TERM_EQUIVALENTS: string[][] = [
+  ['공작도', '철골제작도', '제작도', '시공상세도', 'shop drawing', 'shopdrawing'],
+  ['철골세우기', '철골 설치', '강구조 설치', 'steel erection', 'erection'],
+  ['고장력볼트', '고력볼트', 'high strength bolt'],
+  ['앵커볼트', '기초볼트', 'anchor bolt'],
+  ['데크플레이트', '데크 플레이트', 'steel deck'],
+  ['관 이음', '배관 이음', 'pipe joint', 'piping joint'],
+  ['보온', '단열', 'thermal insulation'],
+];
+
+const CONTEXT_REFERENCE = /(?:상기|전항|앞(?:의|서)?|위(?:의)?)\s*(?:제?\s*)?(?:\(?[①-⑳0-9가-하]+\)?(?:\.\d+)*)?(?:항|호|목|규정|기준|내용)?/i;
+
 function text(value: unknown): string {
   if (typeof value === 'string') return value;
   if (
@@ -161,8 +173,20 @@ function normalize(value: string) {
     .trim();
 }
 
+function equivalentGroups(value: string) {
+  const compact = normalize(value).replace(/\s+/g, '');
+  return TERM_EQUIVALENTS.filter((group) =>
+    group.some((term) => compact.includes(normalize(term).replace(/\s+/g, ''))),
+  );
+}
+
+function expandEquivalentTerms(value: string) {
+  const additions = equivalentGroups(value).flat();
+  return additions.length ? `${value} ${[...new Set(additions)].join(' ')}` : value;
+}
+
 function tokens(value: string) {
-  return normalize(value)
+  return normalize(expandEquivalentTerms(value))
     .split(' ')
     .filter((token) => token.length >= 2);
 }
@@ -212,9 +236,13 @@ export async function matchClause(
 ) {
   const db = getDatabase();
   const sourceText = `${context} ${content}`.trim();
-  const queryTokens = tokens(sourceText)
+  const sourceEquivalentGroups = equivalentGroups(sourceText);
+  const equivalentTokens = sourceEquivalentGroups.flatMap((group) =>
+    group.flatMap((term) => normalize(term).split(' ').filter(Boolean)),
+  );
+  const queryTokens = [...equivalentTokens, ...tokens(sourceText)]
     .filter((value, index, array) => array.indexOf(value) === index)
-    .slice(0, 12);
+    .slice(0, 20);
   if (!queryTokens.length) return 0;
 
   const tokenConditions = queryTokens
@@ -227,7 +255,12 @@ export async function matchClause(
       : '';
     return db
       .prepare(`
-      SELECT id,kcs_code,document_name,title,content FROM kcs_sections
+      SELECT id,document_id,section_order,kcs_code,kcs_clause,document_name,title,content,
+        (SELECT previous.content FROM kcs_sections previous
+          WHERE previous.document_id=kcs_sections.document_id
+            AND previous.section_order<kcs_sections.section_order
+          ORDER BY previous.section_order DESC LIMIT 1) AS previous_content
+      FROM kcs_sections
       WHERE (${tokenConditions})${scopeCondition} LIMIT 180
     `)
       .bind(...tokenBindings, ...prefixes.map((prefix) => `KCS${prefix}%`))
@@ -243,17 +276,28 @@ export async function matchClause(
 
   const ranked = [...pool.values()]
     .map((row) => {
-      const candidateText = `${text(row.document_name)} ${text(row.title)} ${text(row.content)}`;
+      const candidateContent = text(row.content);
+      const candidateContext = CONTEXT_REFERENCE.test(candidateContent)
+        ? text(row.previous_content) : '';
+      const candidateText = `${text(row.document_name)} ${text(row.title)} ${candidateContext} ${candidateContent}`;
+      const candidateGroups = equivalentGroups(candidateText);
+      const equivalentMatch = sourceEquivalentGroups.some((group) => candidateGroups.includes(group));
       const baseScore = similarity(sourceText, candidateText);
       const code = text(row.kcs_code).replace(/\D/g, '');
       const inScope = scope.some((prefix) => code.startsWith(prefix));
+      const titleOnly = normalize(candidateContent) === normalize(text(row.title));
+      const substantive = normalize(candidateContent).replace(/[^0-9a-z가-힣]/g, '').length >= 20
+        || /(?:한다|된다|있다|없다|따른다|하여야|해야|원칙)/.test(candidateContent);
+      const contextPenalty = CONTEXT_REFERENCE.test(candidateContent) ? 0.88 : 1;
       return {
         id: text(row.id),
-        score: baseScore,
-        rankScore: baseScore + (inScope ? 0.12 : 0),
+        score: baseScore * contextPenalty,
+        eligible: !titleOnly && substantive,
+        rankScore: baseScore * contextPenalty + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0),
+        equivalentMatch,
       };
     })
-    .filter((entry) => entry.id && entry.score >= 0.25)
+    .filter((entry) => entry.id && entry.eligible && entry.score >= 0.25)
     .sort((a, b) => b.rankScore - a.rankScore || b.score - a.score)
     .slice(0, 3);
 
@@ -277,7 +321,11 @@ export async function matchClause(
         entry.id,
         index + 1,
         entry.score,
-        JSON.stringify(['클라우드 토큰 유사도', '수치 일치 보정']),
+        JSON.stringify([
+          '클라우드 토큰 유사도',
+          ...(entry.equivalentMatch ? ['건설 전문용어 동의어 일치'] : []),
+          '수치 일치 보정',
+        ]),
         '[]',
         createdAt,
       )
@@ -377,4 +425,77 @@ export async function createProjectFromDocx(file: File) {
   }
 
   return projectId;
+}
+
+export async function rematchCloudProject(projectId: string) {
+  const db = getDatabase();
+  const project = await db.prepare('SELECT title,source_filename,kcs_revision FROM projects WHERE id=?')
+    .bind(projectId).first<Record<string, unknown>>();
+  if (!project) throw new Error('재매칭할 프로젝트를 찾지 못했습니다.');
+  const meta = await db.prepare("SELECT value FROM app_meta WHERE key='kcs_revision'")
+    .first<{ value: string }>();
+  const clauses = await db.prepare(`
+    SELECT id,source_order,title,source_type,outline_level,content,selected_candidate_id,coverage_confirmed
+    FROM clauses WHERE project_id=? ORDER BY source_order
+  `).bind(projectId).all<Record<string, unknown>>();
+  const scope = disciplineScope(`${text(project.title)} ${text(project.source_filename)}`);
+  const headingPath: string[] = [];
+  let matchedCount = 0;
+  let reviewableCount = 0;
+  for (const clause of clauses.results || []) {
+    const sourceType = text(clause.source_type);
+    const level = Number(clause.outline_level || 0);
+    if (sourceType === 'heading') {
+      if (level > 0) {
+        headingPath.splice(level - 1);
+        headingPath[level - 1] = text(clause.content);
+      }
+      continue;
+    }
+    reviewableCount += 1;
+    const selectedCandidateId = text(clause.selected_candidate_id);
+    const selectedSection = selectedCandidateId
+      ? await db.prepare('SELECT section_id FROM project_candidates WHERE id=? AND clause_id=?')
+          .bind(selectedCandidateId, text(clause.id)).first<{ section_id: string }>()
+      : null;
+    const candidateCount = await matchClause(
+      projectId,
+      text(clause.id),
+      text(clause.content),
+      headingPath.join(' > '),
+      scope,
+    );
+    if (candidateCount > 0) matchedCount += 1;
+    if (selectedSection?.section_id) {
+      const replacement = await db.prepare(
+        'SELECT id FROM project_candidates WHERE clause_id=? AND section_id=? ORDER BY rank LIMIT 1',
+      ).bind(text(clause.id), selectedSection.section_id).first<{ id: string }>();
+      await db.prepare('UPDATE clauses SET selected_candidate_id=?,coverage_confirmed=?,updated_at=? WHERE id=?')
+        .bind(
+          replacement?.id || null,
+          replacement ? Number(clause.coverage_confirmed || 0) : 0,
+          nowIso(),
+          text(clause.id),
+        ).run();
+    }
+  }
+  const finishedAt = nowIso();
+  const targetRevision = text(meta?.value);
+  await db.prepare('UPDATE projects SET kcs_revision=?,kcs_snapshot=?,updated_at=? WHERE id=?')
+    .bind(targetRevision, finishedAt, finishedAt, projectId).run();
+  return {
+    id: newId('rematch'),
+    from_revision: text(project.kcs_revision),
+    target_revision: targetRevision,
+    status: 'completed' as const,
+    total_clauses: reviewableCount,
+    matched_count: matchedCount,
+    material_change_count: 0,
+    review_required_count: 0,
+    unacknowledged_count: 0,
+    error: '',
+    started_at: finishedAt,
+    finished_at: finishedAt,
+    matcher_signature: { domain_equivalents: true, reference_context: true },
+  };
 }

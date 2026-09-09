@@ -50,6 +50,20 @@ STOPWORDS = {
     "한다", "하여야", "있다", "대한", "경우", "따른다", "사용", "시공", "공사", "재료",
     "그리고", "또는", "위하여", "필요", "적용", "기준", "해당",
 }
+TERM_EQUIVALENT_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("공작도", "철골제작도", "제작도", "시공상세도", "shop drawing", "shopdrawing"),
+    ("철골세우기", "철골 설치", "강구조 설치", "steel erection", "erection"),
+    ("고장력볼트", "고력볼트", "high strength bolt"),
+    ("앵커볼트", "기초볼트", "anchor bolt"),
+    ("데크플레이트", "데크 플레이트", "steel deck"),
+    ("관 이음", "배관 이음", "pipe joint", "piping joint"),
+    ("보온", "단열", "thermal insulation"),
+)
+CONTEXT_REFERENCE_RE = re.compile(
+    r"(?:상기|전항|앞(?:의|서)?|위(?:의)?)\s*"
+    r"(?:제?\s*)?(?:\(?[①-⑳0-9가-하]+\)?(?:\.\d+)*)?(?:항|호|목|규정|기준|내용)?",
+    re.I,
+)
 LEXICAL_POOL_SIZE = 40
 GLOBAL_POOL_SIZE = 80
 GLOBAL_DOCUMENT_LIMIT = 5
@@ -78,8 +92,19 @@ def normalize_standard_references(value: Any) -> str:
     )
 
 
+def expand_equivalent_terms(value: Any) -> str:
+    """Append construction-domain equivalents without replacing the source wording."""
+    text = str(value or "")
+    compact = re.sub(r"\s+", "", text).lower()
+    additions: list[str] = []
+    for group in TERM_EQUIVALENT_GROUPS:
+        if any(re.sub(r"\s+", "", term).lower() in compact for term in group):
+            additions.extend(group)
+    return clean_space(f"{text} {' '.join(dict.fromkeys(additions))}")
+
+
 def normalize_key(value: Any) -> str:
-    normalized = normalize_standard_references(value)
+    normalized = normalize_standard_references(expand_equivalent_terms(value))
     return re.sub(r"[^0-9a-z가-힣]", "", clean_space(normalized).lower())
 
 
@@ -285,6 +310,8 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
             invalid_files.append(path.name)
             continue
         code = str(record.get("code") or code_from_name)
+        previous_content = ""
+        previous_by_title: dict[str, str] = {}
         for item in record.get("list") or []:
             if not raw_section_is_usable(item):
                 continue
@@ -292,6 +319,16 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
             title = clean_space(item.get("title"))
             if not content and not title:
                 continue
+            context_dependent = bool(CONTEXT_REFERENCE_RE.search(content))
+            reference_context = previous_by_title.get(title) or previous_content
+            context_resolved = bool(context_dependent and reference_context)
+            search_content = (
+                f"{reference_context} {content}" if context_resolved else content
+            )
+            display_content = (
+                f"[앞 조항] {reference_context}\n[현재 조항] {content}"
+                if context_resolved else content
+            )
             sections.append(
                 {
                     "code": format_kcs_code(code),
@@ -301,8 +338,16 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
                     "clause": clean_space(item.get("label")),
                     "title": title,
                     "content": content,
+                    "search_content": search_content,
+                    "display_content": display_content,
+                    "context_dependent": context_dependent,
+                    "context_resolved": context_resolved,
                 }
             )
+            if content and normalize_key(content) != normalize_key(title):
+                previous_content = content
+                if title:
+                    previous_by_title[title] = content
     if invalid_files:
         names = ", ".join(invalid_files[:5])
         raise RuntimeError(f"손상된 KCS JSON이 있습니다: {names}")
@@ -327,16 +372,21 @@ def ngrams(text: str) -> collections.Counter[str]:
     return counts
 
 
+def _section_search_text(section: dict[str, Any]) -> str:
+    return (
+        f"{section['code']} {section['document_name']} "
+        f"{section['title']} {section['title']} "
+        f"{section.get('search_content') or section['content']}"
+    )
+
+
 @functools.lru_cache(maxsize=16)
 def build_index(raw_dir_text: str, prefixes: tuple[str, ...]):
     sections = load_kcs_sections(raw_dir_text, prefixes)
     docs: list[collections.Counter[str]] = []
     document_frequency: collections.Counter[str] = collections.Counter()
     for section in sections:
-        search_text = (
-            f"{section['code']} {section['document_name']} "
-            f"{section['title']} {section['title']} {section['content']}"
-        )
+        search_text = _section_search_text(section)
         counts = ngrams(search_text)
         docs.append(counts)
         document_frequency.update(counts.keys())
@@ -357,7 +407,7 @@ def build_index(raw_dir_text: str, prefixes: tuple[str, ...]):
 
 
 def _word_tokens(text: str) -> list[str]:
-    normalized = normalize_standard_references(text)
+    normalized = normalize_standard_references(expand_equivalent_terms(text))
     return [
         token.lower()
         for token in TOKEN_RE.findall(normalized)
@@ -372,10 +422,7 @@ def build_bm25_index(raw_dir_text: str, prefixes: tuple[str, ...]):
     document_lengths: list[int] = []
     document_frequency: collections.Counter[str] = collections.Counter()
     for document_index, section in enumerate(sections):
-        search_text = (
-            f"{section['code']} {section['document_name']} "
-            f"{section['title']} {section['title']} {section['content']}"
-        )
+        search_text = _section_search_text(section)
         counts = collections.Counter(_word_tokens(search_text))
         document_lengths.append(sum(counts.values()))
         document_frequency.update(counts.keys())
@@ -563,10 +610,7 @@ def _stable_section_score(
 ) -> float:
     """Corpus-independent score used to compare results from different documents."""
     query_counts = ngrams(text)
-    document_counts = ngrams(
-        f"{section['code']} {section['document_name']} "
-        f"{section['title']} {section['title']} {section['content']}"
-    )
+    document_counts = ngrams(_section_search_text(section))
     query_norm = math.sqrt(sum(value * value for value in query_counts.values())) or 1.0
     document_norm = math.sqrt(sum(value * value for value in document_counts.values())) or 1.0
     cosine = sum(
@@ -575,7 +619,7 @@ def _stable_section_score(
     ) / (query_norm * document_norm)
     query_tokens = set(_word_tokens(text))
     document_tokens = set(
-        _word_tokens(f"{section['document_name']} {section['title']} {section['content']}")
+        _word_tokens(_section_search_text(section))
     )
     token_coverage = (
         len(query_tokens & document_tokens) / len(query_tokens)
@@ -586,6 +630,8 @@ def _stable_section_score(
     code = _code_digits(section["code"])
     if domain_prefixes and any(code.startswith(prefix) for prefix in domain_prefixes):
         score = 0.82 * score + 0.18
+    if section.get("context_dependent"):
+        score *= 0.88 if section.get("context_resolved") else 0.45
     return min(1.0, score)
 
 
@@ -638,6 +684,38 @@ def _keyword_recovery_prefixes(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(recovered))
 
 
+def _matched_equivalent_groups(text: str) -> tuple[tuple[str, ...], ...]:
+    compact = re.sub(r"\s+", "", text).lower()
+    return tuple(
+        group
+        for group in TERM_EQUIVALENT_GROUPS
+        if any(re.sub(r"\s+", "", term).lower() in compact for term in group)
+    )
+
+
+def _rank_equivalent_sections(
+    text: str,
+    raw_dir: Path,
+    prefixes: tuple[str, ...],
+    limit: int = LEXICAL_POOL_SIZE,
+) -> list[tuple[dict[str, Any], float]]:
+    groups = _matched_equivalent_groups(text)
+    if not groups:
+        return []
+    sections = load_kcs_sections(str(raw_dir), prefixes)
+    ranked = []
+    for section in sections:
+        section_text = f"{section['document_name']} {section['title']} {section['search_content']}"
+        section_groups = set(_matched_equivalent_groups(section_text))
+        if not section_groups.intersection(groups):
+            continue
+        marked = dict(section)
+        marked["_equivalent_scope"] = True
+        ranked.append((marked, _stable_section_score(text, marked, prefixes)))
+    ranked.sort(key=lambda item: (-item[1], _section_key(item[0])))
+    return ranked[:limit]
+
+
 def _rank_matches(
     text: str,
     raw_dir: Path,
@@ -667,10 +745,14 @@ def _rank_matches(
         or not scoped
         or scoped[0][1] < 0.45
     )
-    if not scoped_is_weak and not referenced_codes:
+    if not scoped_is_weak and not referenced_codes and not _matched_equivalent_groups(text):
         return scoped[:limit]
 
     ranked_groups: list[tuple[str, list[tuple[dict[str, Any], float]]]] = [("scoped", scoped)]
+
+    equivalent_ranked = _rank_equivalent_sections(text, raw_dir, prefixes)
+    if equivalent_ranked:
+        ranked_groups.append(("equivalent", equivalent_ranked))
 
     keyword_prefixes = tuple(
         prefix for prefix in _keyword_recovery_prefixes(text) if prefix not in prefixes
@@ -716,7 +798,13 @@ def _rank_matches(
             )
 
     merged: dict[tuple[str, str, str], dict[str, Any]] = {}
-    source_weights = {"scoped": 1.08, "keyword": 1.35, "global": 1.0, "explicit": 2.5}
+    source_weights = {
+        "scoped": 1.08,
+        "equivalent": 2.0,
+        "keyword": 1.35,
+        "global": 1.0,
+        "explicit": 2.5,
+    }
     for source, group in ranked_groups:
         for rank, (section, score) in enumerate(group, start=1):
             key = _section_key(section)
@@ -742,6 +830,8 @@ def _rank_matches(
                 entry["section"] = section
             if source == "keyword":
                 entry["keyword"] = True
+            if source == "equivalent":
+                entry["section"]["_equivalent_scope"] = True
 
     maximum_priority = max((entry["priority"] for entry in merged.values()), default=1.0)
     combined: list[tuple[dict[str, Any], float]] = []
@@ -759,6 +849,7 @@ def _rank_matches(
                 item[1]
                 + 0.08 * float(item[0].get("_retrieval_priority", 0.0))
                 + (0.16 if item[0].get("_keyword_scope") else 0.0)
+                + (0.2 if item[0].get("_equivalent_scope") else 0.0)
                 + (1.0 if item[0].get("_explicit_reference") else 0.0)
             ),
             _section_key(item[0]),
@@ -805,7 +896,7 @@ def _rerank_with_embeddings(
         or not getattr(ai_client, "embeddings_available", True)
     ):
         return local
-    documents = [f"{section['title']} {section['content']}" for section, _ in ranked]
+    documents = [_section_search_text(section) for section, _ in ranked]
     try:
         semantic_scores = ai_client.embedding_scores(source_text, documents)
     except OpenAIAPIError:
@@ -837,6 +928,7 @@ def _rerank_from_scores(
                 0.85 * item[1]
                 + 0.15 * float(item[0].get("_retrieval_priority", 0.0))
                 + (0.16 if item[0].get("_keyword_scope") else 0.0)
+                + (0.2 if item[0].get("_equivalent_scope") else 0.0)
                 + (1.0 if item[0].get("_explicit_reference") else 0.0)
             ),
             -(item[2] or 0.0),
@@ -884,13 +976,24 @@ def _candidate_rows(
 
     for section, score, semantic_score in ordered:
         explicit_reference = bool(section.get("_explicit_reference"))
+        title_only = normalize_key(section["content"]) == normalize_key(section["title"])
+        content_key = re.sub(r"[^0-9a-z가-힣]", "", section["content"].lower())
+        non_substantive_fragment = (
+            len(content_key) < 20
+            and not re.search(r"(?:한다|된다|있다|없다|따른다|하여야|해야|원칙)", section["content"])
+        )
+        if (title_only or non_substantive_fragment) and not explicit_reference:
+            continue
         if score < 0.25 and not explicit_reference:
             continue
         key = (section["code"], section["clause"], section["content"])
         if key in seen:
             continue
         seen.add(key)
-        reasons, warnings = _comparison_metadata(source_text, section["content"])
+        candidate_content = section.get("display_content") or section["content"]
+        reasons, warnings = _comparison_metadata(source_text, candidate_content)
+        if section.get("context_resolved"):
+            reasons.append("참조 표현의 앞 조항을 함께 비교했습니다.")
         if explicit_reference:
             reasons.insert(0, "포스코 원문이 이 KCS 코드를 직접 참조합니다.")
         if semantic_score is not None:
@@ -912,7 +1015,7 @@ def _candidate_rows(
                 "update_date": section["update_date"],
                 "kcs_clause": section["clause"],
                 "title": section["title"],
-                "content": section["content"],
+                "content": candidate_content,
                 "score": round(score, 4),
                 "classification": "명시 KCS 참조" if explicit_reference else classify(score),
                 "reasons": reasons,
@@ -969,7 +1072,7 @@ def match_clauses(
             score_groups = batch_method(
                 [row[1] for _, row in active],
                 [
-                    [f"{section['title']} {section['content']}" for section, _ in row[2]]
+                    [_section_search_text(section) for section, _ in row[2]]
                     for _, row in active
                 ],
             )
@@ -1004,7 +1107,7 @@ def match_clauses(
                 )
             semantic_scores = embedding_method(
                 source_text,
-                [f"{section['title']} {section['content']}" for section, _ in local_ranked],
+                [_section_search_text(section) for section, _ in local_ranked],
             )
             if len(semantic_scores) != len(local_ranked):
                 raise OpenAIAPIError("임베딩 점수 개수가 재매칭 후보와 일치하지 않습니다.")

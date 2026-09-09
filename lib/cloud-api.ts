@@ -21,6 +21,16 @@ function jsonArray(value: unknown): unknown[] {
   }
 }
 
+const CONTEXT_REFERENCE = /(?:상기|전항|앞(?:의|서)?|위(?:의)?)\s*(?:제?\s*)?(?:\(?[①-⑳0-9가-하]+\)?(?:\.\d+)*)?(?:항|호|목|규정|기준|내용)?/i;
+
+function candidateContent(candidate: Record<string, unknown>) {
+  const content = text(candidate.content);
+  const previousD = text(candidate.previous_content);
+  return CONTEXT_REFERENCE.test(content) && previousD
+    ? `[앞 조항] ${previousD}\n[현재 조항] ${content}`
+    : content;
+}
+
 export async function getMeta() {
   const db = getDatabase();
   const result = await db.prepare("SELECT key, value FROM app_meta WHERE key IN ('kcs_snapshot','kcs_revision')").all<{ key: string; value: string }>();
@@ -122,7 +132,10 @@ export async function clauseDetail(projectId: string, clauseId: string) {
   if (!row) return null;
   const candidates = await db.prepare(`
     SELECT pc.id, pc.rank, pc.score, pc.reasons_json, pc.warnings_json, s.kcs_code, s.document_name,
-           s.version, s.update_date, s.kcs_clause, s.title, s.content
+           s.version, s.update_date, s.kcs_clause, s.title, s.content,
+           (SELECT previous.content FROM kcs_sections previous
+             WHERE previous.document_id=s.document_id AND previous.section_order<s.section_order
+             ORDER BY previous.section_order DESC LIMIT 1) AS previous_content
       FROM project_candidates pc JOIN kcs_sections s ON s.id=pc.section_id
      WHERE pc.clause_id=? AND pc.excluded=0 ORDER BY pc.rank
   `).bind(clauseId).all<Record<string, unknown>>();
@@ -136,8 +149,12 @@ export async function clauseDetail(projectId: string, clauseId: string) {
     candidates: (candidates.results || []).map((candidate) => ({
       id: text(candidate.id), rank: Number(candidate.rank), kcs_code: text(candidate.kcs_code), document_name: text(candidate.document_name),
       version: text(candidate.version), update_date: text(candidate.update_date), kcs_clause: text(candidate.kcs_clause),
-      title: text(candidate.title), content: text(candidate.content), score: Number(candidate.score || 0), classification: '',
-      reasons: jsonArray(candidate.reasons_json), warnings: jsonArray(candidate.warnings_json), ai_analysis: null,
+      title: text(candidate.title), content: candidateContent(candidate), score: Number(candidate.score || 0), classification: '',
+      reasons: [
+        ...jsonArray(candidate.reasons_json),
+        ...(CONTEXT_REFERENCE.test(text(candidate.content)) && text(candidate.previous_content)
+          ? ['참조 표현의 앞 조항을 함께 표시합니다.'] : []),
+      ], warnings: jsonArray(candidate.warnings_json), ai_analysis: null,
     })),
     excluded_candidates: [], coverage_analysis: null, quality_evaluation: null, kcs_impact: null,
   };
