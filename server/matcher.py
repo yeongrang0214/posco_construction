@@ -63,14 +63,24 @@ KCS_REFERENCE_RE = re.compile(
     r"KCS\s*[-_]?\s*(\d{2})\s*[-_]?\s*(\d{2})\s*[-_]?\s*(\d{2})",
     re.I,
 )
+KS_REFERENCE_RE = re.compile(r"\bKS\s*([A-Z])\s*[-_]?\s*(\d{3,})\b", re.I)
 
 
 def clean_space(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def normalize_standard_references(value: Any) -> str:
+    """Canonicalize common KS spellings such as KSD 3503 and KS D-3503."""
+    return KS_REFERENCE_RE.sub(
+        lambda match: f"KS {match.group(1).upper()} {match.group(2)}",
+        str(value or ""),
+    )
+
+
 def normalize_key(value: Any) -> str:
-    return re.sub(r"[^0-9a-z가-힣]", "", clean_space(value).lower())
+    normalized = normalize_standard_references(value)
+    return re.sub(r"[^0-9a-z가-힣]", "", clean_space(normalized).lower())
 
 
 def strip_html(value: Any) -> str:
@@ -125,19 +135,30 @@ def infer_scope(
     newly uploaded discipline does not have to be added to this source file first.
     Clause-level recovery in ``_rank_matches`` still broadens weak document routing.
     """
-    combined = f"{filename} {title} {sample_text[:DOCUMENT_SCOPE_SAMPLE_CHARACTERS]}"
-    # POSCO chapter numbers and the small keyword table are deliberately only
-    # fallbacks.  The uploaded corpus can use a different chapter system, so an
-    # available current KCS catalog must remain the source of truth for routing.
-    scope_hint: tuple[tuple[str, ...], str] | None = None
+    document_identity = f"{filename} {title}"
+    combined = f"{document_identity} {sample_text[:DOCUMENT_SCOPE_SAMPLE_CHARACTERS]}"
+    # Chapter numbers are only a fallback because another uploaded corpus can use
+    # a different numbering system.  A matching discipline keyword is stronger:
+    # keep that broad KCS family in addition to the current catalog shortlist.
+    chapter_hint: tuple[tuple[str, ...], str] | None = None
     chapter_match = re.search(r"제?\s*(\d{1,2})\s*장", combined)
     if chapter_match:
-        scope_hint = CHAPTER_SCOPES.get(int(chapter_match.group(1)))
-    if scope_hint is None:
-        for keywords, chapter in KEYWORD_SCOPES:
-            if any(keyword in combined for keyword in keywords):
-                scope_hint = CHAPTER_SCOPES[chapter]
-                break
+        chapter_hint = CHAPTER_SCOPES.get(int(chapter_match.group(1)))
+    keyword_hint: tuple[tuple[str, ...], str] | None = None
+    # A discipline named in the filename/title is more reliable than incidental
+    # material names inside a specification that can span several trades.
+    for keywords, chapter in KEYWORD_SCOPES:
+        if any(keyword in document_identity for keyword in keywords):
+            keyword_hint = CHAPTER_SCOPES[chapter]
+            break
+    if keyword_hint is None:
+        scored_hints = [
+            (sum(combined.count(keyword) for keyword in keywords), chapter)
+            for keywords, chapter in KEYWORD_SCOPES
+        ]
+        hit_count, hit_chapter = max(scored_hints, default=(0, 0))
+        if hit_count:
+            keyword_hint = CHAPTER_SCOPES[hit_chapter]
 
     if raw_dir is not None:
         explicit_codes = tuple(sorted(_referenced_kcs_codes(combined)))
@@ -149,15 +170,18 @@ def infer_scope(
             )
         except RuntimeError:
             catalog_codes = ()
-        routed_codes = tuple(
-            dict.fromkeys((*explicit_codes, *catalog_codes))
-        )[:DOCUMENT_SCOPE_LIMIT]
+        keyword_codes = keyword_hint[0] if keyword_hint is not None else ()
+        routed_codes = tuple(dict.fromkeys(
+            (*explicit_codes, *keyword_codes, *catalog_codes)
+        ))[:DOCUMENT_SCOPE_LIMIT]
         if routed_codes:
             display = ", ".join(format_kcs_code(code) for code in routed_codes)
             return routed_codes, f"{display} (KCS 목록 기반 자동 추정)"
 
-    if scope_hint is not None:
-        return scope_hint
+    if keyword_hint is not None:
+        return keyword_hint
+    if chapter_hint is not None:
+        return chapter_hint
     return ("41",), "KCS 41 (자동 범위 추정 실패)"
 
 
@@ -333,7 +357,12 @@ def build_index(raw_dir_text: str, prefixes: tuple[str, ...]):
 
 
 def _word_tokens(text: str) -> list[str]:
-    return [token.lower() for token in TOKEN_RE.findall(text) if token.lower() not in STOPWORDS]
+    normalized = normalize_standard_references(text)
+    return [
+        token.lower()
+        for token in TOKEN_RE.findall(normalized)
+        if token.lower() not in STOPWORDS
+    ]
 
 
 @functools.lru_cache(maxsize=16)

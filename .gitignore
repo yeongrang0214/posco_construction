@@ -39,6 +39,7 @@ yarn-error.log*
 /.venv/
 /server/vendor/
 /server/**/__pycache__/
+**/__pycache__/
 /.pytest_cache/
 
 # deployment and generated files

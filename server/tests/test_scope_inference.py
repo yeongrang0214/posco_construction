@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import server.matcher as matcher_module
-from server.matcher import build_scope_sample, infer_scope
+from server.matcher import _word_tokens, build_scope_sample, infer_scope, normalize_key
 
 
 def _write_catalog(tmp_path):
@@ -66,7 +66,7 @@ def test_catalog_scope_prioritizes_an_explicit_kcs_reference(tmp_path):
     assert prefixes[0] == "316535"
 
 
-def test_current_catalog_overrides_a_known_posco_chapter_hint(tmp_path):
+def test_steel_keyword_scope_is_retained_with_current_catalog_routes(tmp_path):
     raw_dir = _write_catalog(tmp_path)
 
     prefixes, display = infer_scope(
@@ -76,10 +76,26 @@ def test_current_catalog_overrides_a_known_posco_chapter_hint(tmp_path):
         raw_dir,
     )
 
-    assert prefixes[0] == "413105"
-    assert all(len(prefix) == 6 for prefix in prefixes)
+    assert prefixes[:2] == ("4131", "1431")
+    assert "413105" in prefixes
+    assert "KCS 41 31" in display
+    assert "KCS 14 31" in display
     assert "KCS 41 31 05" in display
     assert "KCS 목록 기반 자동 추정" in display
+
+
+def test_filename_discipline_wins_over_incidental_body_keywords(tmp_path):
+    raw_dir = _write_catalog(tmp_path)
+
+    prefixes, _ = infer_scope(
+        "건축_제13장_철골공사.docx",
+        "철골공사",
+        "천장 보드 및 수장재와 접하는 철골 부위를 보강한다.",
+        raw_dir,
+    )
+
+    assert prefixes[:2] == ("4131", "1431")
+    assert "4151" not in prefixes
 
 
 def test_catalog_routing_does_not_assume_the_current_posco_chapter_system(tmp_path):
@@ -94,6 +110,20 @@ def test_catalog_routing_does_not_assume_the_current_posco_chapter_system(tmp_pa
 
     assert prefixes[0] == "573010"
     assert "KCS 57 30 10" in display
+
+
+def test_keyword_scope_overrides_an_unrelated_chapter_number(tmp_path):
+    raw_dir = _write_catalog(tmp_path)
+
+    prefixes, _ = infer_scope(
+        "새체계_제13장.docx",
+        "상수도 관로 설치",
+        "관로의 접합, 수압시험 및 매설 기준",
+        raw_dir,
+    )
+
+    assert prefixes[0] == "573010"
+    assert "4131" not in prefixes
 
 
 def test_static_chapter_scope_is_only_the_no_catalog_fallback():
@@ -151,3 +181,8 @@ def test_exact_catalog_routes_build_reusable_single_document_indexes(tmp_path, m
     )
 
     assert calls == [("573010",), ("316535",)]
+
+
+def test_ks_reference_spellings_have_the_same_search_representation():
+    assert normalize_key("KSD 3503") == normalize_key("KS D-3503")
+    assert _word_tokens("KSD 3503") == _word_tokens("KS D 3503")
