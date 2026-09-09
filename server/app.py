@@ -472,7 +472,7 @@ def _execute_kcs_rematch(run_id: str) -> None:
     try:
         worker_client = OpenAIClient.from_settings(settings)
         matcher_signature = {
-            "matcher": "hybrid-kcs-v3-domain-context",
+            "matcher": "hybrid-kcs-v4-adjacent-scope",
             "requested_mode": "strict_openai_embeddings",
             "require_embeddings": True,
             "embedding_model": worker_client.embedding_model,

@@ -40,9 +40,20 @@ const TERM_EQUIVALENTS: string[][] = [
   ['데크플레이트', '데크 플레이트', 'steel deck'],
   ['관 이음', '배관 이음', 'pipe joint', 'piping joint'],
   ['보온', '단열', 'thermal insulation'],
+  ['가붙임', '임시용접', '가용접', 'tack welding', 'tack weld'],
+  ['밑면 따내기', '뒷면 파내기', '백가우징', 'back gouging', 'back chipping'],
+  ['도리', '중도리', 'purlin'],
+  ['띠장', 'girt'],
+  ['덧판', '이음판', 'splice plate'],
+  ['접합판', '거셋 플레이트', 'gusset plate'],
+  ['보강판', '스티프너', 'stiffener'],
+  ['솟음', '캠버', 'camber'],
+  ['현치도', '원척도', 'full size drawing'],
 ];
 
 const CONTEXT_REFERENCE = /(?:상기|전항|앞(?:의|서)?|위(?:의)?)\s*(?:제?\s*)?(?:\(?[①-⑳0-9가-하]+\)?(?:\.\d+)*)?(?:항|호|목|규정|기준|내용)?/i;
+const FORWARD_CONTEXT_REFERENCE = /(?:아래|다음|하기)(?:의)?\s*(?:표|기준|내용|각호|순서)?|(?:표|그림)\s*\d+(?:[-.]\d+)*\s*(?:과|와|에|의|를|을)?\s*(?:같이|따라|의거)/i;
+const SOURCE_CONTEXT_REFERENCE = /(?:상기|전항|앞|위|아래|다음|하기|그러하지|이를|이에|그\s*(?:기준|내용|방법))/i;
 
 function text(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -227,6 +238,32 @@ function disciplineScope(value: string) {
   );
 }
 
+function sourceContextWithNeighbors(
+  clauses: Array<{ source_type?: unknown; title?: unknown; content?: unknown }>,
+  index: number,
+  headingContext: string,
+) {
+  const current = `${text(clauses[index]?.title)} ${text(clauses[index]?.content)}`.trim();
+  const compact = normalize(`${headingContext} ${current}`).replace(/[^0-9a-z가-힣]/g, '');
+  if (
+    compact.length >= 45 &&
+    !SOURCE_CONTEXT_REFERENCE.test(current) &&
+    !FORWARD_CONTEXT_REFERENCE.test(current)
+  ) return headingContext;
+  const parts = [headingContext];
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    if (text(clauses[previous]?.source_type) === 'heading') continue;
+    parts.push(`${text(clauses[previous]?.title)} ${text(clauses[previous]?.content)}`);
+    break;
+  }
+  for (let following = index + 1; following < clauses.length; following += 1) {
+    if (text(clauses[following]?.source_type) === 'heading') continue;
+    parts.push(`${text(clauses[following]?.title)} ${text(clauses[following]?.content)}`);
+    break;
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
 export async function matchClause(
   projectId: string,
   clauseId: string,
@@ -259,7 +296,11 @@ export async function matchClause(
         (SELECT previous.content FROM kcs_sections previous
           WHERE previous.document_id=kcs_sections.document_id
             AND previous.section_order<kcs_sections.section_order
-          ORDER BY previous.section_order DESC LIMIT 1) AS previous_content
+          ORDER BY previous.section_order DESC LIMIT 1) AS previous_content,
+        (SELECT following.content FROM kcs_sections following
+          WHERE following.document_id=kcs_sections.document_id
+            AND following.section_order>kcs_sections.section_order
+          ORDER BY following.section_order ASC LIMIT 1) AS next_content
       FROM kcs_sections
       WHERE (${tokenConditions})${scopeCondition} LIMIT 180
     `)
@@ -277,23 +318,31 @@ export async function matchClause(
   const ranked = [...pool.values()]
     .map((row) => {
       const candidateContent = text(row.content);
-      const candidateContext = CONTEXT_REFERENCE.test(candidateContent)
-        ? text(row.previous_content) : '';
+      const candidateContext = [
+        CONTEXT_REFERENCE.test(candidateContent) ? text(row.previous_content) : '',
+        FORWARD_CONTEXT_REFERENCE.test(candidateContent) ? text(row.next_content) : '',
+      ].filter(Boolean).join(' ');
       const candidateText = `${text(row.document_name)} ${text(row.title)} ${candidateContext} ${candidateContent}`;
       const candidateGroups = equivalentGroups(candidateText);
       const equivalentMatch = sourceEquivalentGroups.some((group) => candidateGroups.includes(group));
       const baseScore = similarity(sourceText, candidateText);
       const code = text(row.kcs_code).replace(/\D/g, '');
       const inScope = scope.some((prefix) => code.startsWith(prefix));
+      const steelScope = scope.some((prefix) => ['4131', '1431'].some((steel) => steel.startsWith(prefix) || prefix.startsWith(steel)));
+      const steelPrimary = ['4131', '1431'].some((prefix) => code.startsWith(prefix));
+      const steelRelated =
+        (/(?:용접|가붙임|가우징|weld|gouging|bevel|fillet)/i.test(sourceText) && code.startsWith('2431')) ||
+        (/(?:도장|방청|도막|페인트|paint|primer)/i.test(sourceText) && ['4147', '3120', '4143'].some((prefix) => code.startsWith(prefix)));
+      const scopePenalty = steelScope && !steelPrimary && !steelRelated ? 0.72 : 1;
       const titleOnly = normalize(candidateContent) === normalize(text(row.title));
       const substantive = normalize(candidateContent).replace(/[^0-9a-z가-힣]/g, '').length >= 20
         || /(?:한다|된다|있다|없다|따른다|하여야|해야|원칙)/.test(candidateContent);
-      const contextPenalty = CONTEXT_REFERENCE.test(candidateContent) ? 0.88 : 1;
+      const contextPenalty = CONTEXT_REFERENCE.test(candidateContent) || FORWARD_CONTEXT_REFERENCE.test(candidateContent) ? 0.88 : 1;
       return {
         id: text(row.id),
-        score: baseScore * contextPenalty,
+        score: baseScore * contextPenalty * scopePenalty,
         eligible: !titleOnly && substantive,
-        rankScore: baseScore * contextPenalty + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0),
+        rankScore: baseScore * contextPenalty * scopePenalty + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0),
         equivalentMatch,
       };
     })
@@ -392,7 +441,8 @@ export async function createProjectFromDocx(file: File) {
     )
     .run();
 
-  for (const clause of clauses) {
+  for (let clauseIndex = 0; clauseIndex < clauses.length; clauseIndex += 1) {
+    const clause = clauses[clauseIndex];
     const clauseId = newId('cl');
     await db
       .prepare(`
@@ -419,7 +469,7 @@ export async function createProjectFromDocx(file: File) {
         projectId,
         clauseId,
         clause.content,
-        clause.match_context,
+        sourceContextWithNeighbors(clauses, clauseIndex, clause.match_context),
         scope,
       );
   }
@@ -442,7 +492,9 @@ export async function rematchCloudProject(projectId: string) {
   const headingPath: string[] = [];
   let matchedCount = 0;
   let reviewableCount = 0;
-  for (const clause of clauses.results || []) {
+  const projectClauses = clauses.results || [];
+  for (let clauseIndex = 0; clauseIndex < projectClauses.length; clauseIndex += 1) {
+    const clause = projectClauses[clauseIndex];
     const sourceType = text(clause.source_type);
     const level = Number(clause.outline_level || 0);
     if (sourceType === 'heading') {
@@ -462,7 +514,7 @@ export async function rematchCloudProject(projectId: string) {
       projectId,
       text(clause.id),
       text(clause.content),
-      headingPath.join(' > '),
+      sourceContextWithNeighbors(projectClauses, clauseIndex, headingPath.join(' > ')),
       scope,
     );
     if (candidateCount > 0) matchedCount += 1;
@@ -496,6 +548,6 @@ export async function rematchCloudProject(projectId: string) {
     error: '',
     started_at: finishedAt,
     finished_at: finishedAt,
-    matcher_signature: { domain_equivalents: true, reference_context: true },
+    matcher_signature: { domain_equivalents: true, adjacent_context: true, scope_guard: true },
   };
 }

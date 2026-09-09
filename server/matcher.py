@@ -58,11 +58,34 @@ TERM_EQUIVALENT_GROUPS: tuple[tuple[str, ...], ...] = (
     ("데크플레이트", "데크 플레이트", "steel deck"),
     ("관 이음", "배관 이음", "pipe joint", "piping joint"),
     ("보온", "단열", "thermal insulation"),
+    ("가붙임", "임시용접", "가용접", "tack welding", "tack weld"),
+    ("밑면 따내기", "뒷면 파내기", "백가우징", "back gouging", "back chipping"),
+    ("도리", "중도리", "purlin"),
+    ("띠장", "girt"),
+    ("덧판", "이음판", "splice plate"),
+    ("접합판", "거셋 플레이트", "gusset plate"),
+    ("보강판", "스티프너", "stiffener"),
+    ("솟음", "캠버", "camber"),
+    ("현치도", "원척도", "full size drawing"),
 )
 CONTEXT_REFERENCE_RE = re.compile(
     r"(?:상기|전항|앞(?:의|서)?|위(?:의)?)\s*"
     r"(?:제?\s*)?(?:\(?[①-⑳0-9가-하]+\)?(?:\.\d+)*)?(?:항|호|목|규정|기준|내용)?",
     re.I,
+)
+FORWARD_CONTEXT_REFERENCE_RE = re.compile(
+    r"(?:아래|다음|하기)(?:의)?\s*(?:표|기준|내용|각호|순서)?|"
+    r"(?:표|그림)\s*\d+(?:[-.]\d+)*\s*(?:과|와|에|의|를|을)?\s*(?:같이|따라|의거)",
+    re.I,
+)
+SOURCE_CONTEXT_REFERENCE_RE = re.compile(
+    r"(?:상기|전항|앞|위|아래|다음|하기|그러하지|이를|이에|그\s*(?:기준|내용|방법))",
+    re.I,
+)
+STEEL_PRIMARY_PREFIXES = ("4131", "1431")
+STEEL_RELATED_SCOPES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("용접", "용접봉", "가붙임", "가우징", "weld", "gouging", "bevel", "fillet"), ("2431",)),
+    (("도장", "방청", "도막", "페인트", "paint", "primer"), ("4147", "3120", "4143")),
 )
 LEXICAL_POOL_SIZE = 40
 GLOBAL_POOL_SIZE = 80
@@ -310,8 +333,7 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
             invalid_files.append(path.name)
             continue
         code = str(record.get("code") or code_from_name)
-        previous_content = ""
-        previous_by_title: dict[str, str] = {}
+        usable_items: list[tuple[dict[str, Any], str, str]] = []
         for item in record.get("list") or []:
             if not raw_section_is_usable(item):
                 continue
@@ -319,16 +341,34 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
             title = clean_space(item.get("title"))
             if not content and not title:
                 continue
+            usable_items.append((item, title, content))
+        previous_content = ""
+        previous_by_title: dict[str, str] = {}
+        for item_index, (item, title, content) in enumerate(usable_items):
             context_dependent = bool(CONTEXT_REFERENCE_RE.search(content))
             reference_context = previous_by_title.get(title) or previous_content
-            context_resolved = bool(context_dependent and reference_context)
-            search_content = (
-                f"{reference_context} {content}" if context_resolved else content
+            forward_dependent = bool(FORWARD_CONTEXT_REFERENCE_RE.search(content))
+            next_content = ""
+            if forward_dependent:
+                for _, next_title, following_content in usable_items[item_index + 1:item_index + 4]:
+                    if following_content and normalize_key(following_content) != normalize_key(next_title):
+                        next_content = following_content
+                        break
+            context_resolved = bool(
+                (context_dependent and reference_context) or (forward_dependent and next_content)
             )
-            display_content = (
-                f"[앞 조항] {reference_context}\n[현재 조항] {content}"
-                if context_resolved else content
-            )
+            context_parts = []
+            display_parts = []
+            if context_dependent and reference_context:
+                context_parts.append(reference_context)
+                display_parts.append(f"[앞 조항] {reference_context}")
+            context_parts.append(content)
+            display_parts.append(f"[현재 조항] {content}" if context_resolved else content)
+            if forward_dependent and next_content:
+                context_parts.append(next_content)
+                display_parts.append(f"[다음 조항] {next_content}")
+            search_content = clean_space(" ".join(context_parts))
+            display_content = "\n".join(display_parts)
             sections.append(
                 {
                     "code": format_kcs_code(code),
@@ -341,6 +381,7 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
                     "search_content": search_content,
                     "display_content": display_content,
                     "context_dependent": context_dependent,
+                    "forward_dependent": forward_dependent,
                     "context_resolved": context_resolved,
                 }
             )
@@ -630,6 +671,18 @@ def _stable_section_score(
     code = _code_digits(section["code"])
     if domain_prefixes and any(code.startswith(prefix) for prefix in domain_prefixes):
         score = 0.82 * score + 0.18
+    steel_document = any(
+        prefix.startswith(STEEL_PRIMARY_PREFIXES) or any(primary.startswith(prefix) for primary in STEEL_PRIMARY_PREFIXES)
+        for prefix in domain_prefixes
+    )
+    if steel_document and not code.startswith(STEEL_PRIMARY_PREFIXES):
+        related = any(
+            any(term.lower() in text.lower() for term in terms)
+            and code.startswith(allowed_prefixes)
+            for terms, allowed_prefixes in STEEL_RELATED_SCOPES
+        )
+        if not related:
+            score *= 0.72
     if section.get("context_dependent"):
         score *= 0.88 if section.get("context_resolved") else 0.45
     return min(1.0, score)
@@ -993,7 +1046,10 @@ def _candidate_rows(
         candidate_content = section.get("display_content") or section["content"]
         reasons, warnings = _comparison_metadata(source_text, candidate_content)
         if section.get("context_resolved"):
-            reasons.append("참조 표현의 앞 조항을 함께 비교했습니다.")
+            if section.get("forward_dependent"):
+                reasons.append("참조 표현의 인접 조항을 함께 비교했습니다.")
+            else:
+                reasons.append("참조 표현의 앞 조항을 함께 비교했습니다.")
         if explicit_reference:
             reasons.insert(0, "포스코 원문이 이 KCS 코드를 직접 참조합니다.")
         if semantic_score is not None:
@@ -1048,14 +1104,34 @@ def match_clauses(
         tuple[dict[str, Any], str, list[tuple[dict[str, Any], float]]]
     ] = []
     staged_candidates: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-    for clause in clauses:
+    reviewable_indices = [
+        index for index, item in enumerate(clauses)
+        if item.get("source_type") in {"paragraph", "table"}
+    ]
+    reviewable_positions = {index: position for position, index in enumerate(reviewable_indices)}
+    for clause_index, clause in enumerate(clauses):
         if clause.get("source_type") not in {"paragraph", "table"}:
             staged_candidates.append((clause, []))
             continue
-        source_text = clean_space(
+        own_text = clean_space(
             f"{clause.get('match_context', '')} "
             f"{clause['title']} {clause['title']} {clause['content']}"
         )
+        compact_own = re.sub(r"[^0-9a-z가-힣]", "", own_text.lower())
+        needs_adjacent_context = (
+            len(compact_own) < 45
+            or bool(SOURCE_CONTEXT_REFERENCE_RE.search(own_text))
+            or bool(FORWARD_CONTEXT_REFERENCE_RE.search(own_text))
+        )
+        context_parts: list[str] = [own_text]
+        position = reviewable_positions.get(clause_index, -1)
+        if needs_adjacent_context and position > 0:
+            previous = clauses[reviewable_indices[position - 1]]
+            context_parts.append(clean_space(f"{previous.get('title', '')} {previous.get('content', '')}"))
+        if needs_adjacent_context and 0 <= position < len(reviewable_indices) - 1:
+            following = clauses[reviewable_indices[position + 1]]
+            context_parts.append(clean_space(f"{following.get('title', '')} {following.get('content', '')}"))
+        source_text = clean_space(" ".join(context_parts))
         prepared.append((clause, source_text, _rank_matches(source_text, raw_dir, prefixes)))
 
     batch_method = getattr(ai_client, "embedding_score_groups", None)

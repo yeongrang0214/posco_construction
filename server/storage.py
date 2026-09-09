@@ -1583,7 +1583,7 @@ class Store:
                 if (
                     existing["status"] == "completed"
                     and matcher_name.startswith("hybrid-kcs-v")
-                    and matcher_name != "hybrid-kcs-v3-domain-context"
+                    and matcher_name != "hybrid-kcs-v4-adjacent-scope"
                 ):
                     connection.execute(
                         "DELETE FROM kcs_clause_impacts WHERE run_id = ?",
