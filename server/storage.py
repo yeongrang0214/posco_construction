@@ -1576,6 +1576,41 @@ class Store:
                 (project_id, target_revision),
             ).fetchone()
             if existing:
+                public_existing = self._public_kcs_rematch_run(existing)
+                matcher_name = str(
+                    public_existing.get("matcher_signature", {}).get("matcher", "")
+                )
+                if (
+                    existing["status"] == "completed"
+                    and matcher_name.startswith("hybrid-kcs-v")
+                    and matcher_name != "hybrid-kcs-v3-domain-context"
+                ):
+                    connection.execute(
+                        "DELETE FROM kcs_clause_impacts WHERE run_id = ?",
+                        (existing["id"],),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE kcs_rematch_runs
+                        SET from_revision = ?, target_snapshot = ?, status = 'pending',
+                            expected_state_sha256 = '', matcher_signature_json = '{}',
+                            total_clauses = 0, matched_count = 0,
+                            material_change_count = 0, review_required_count = 0,
+                            error = '', queued_at = ?, started_at = NULL, finished_at = NULL
+                        WHERE id = ?
+                        """,
+                        (
+                            str(project["kcs_revision"] or ""),
+                            target_snapshot,
+                            now,
+                            existing["id"],
+                        ),
+                    )
+                    refreshed = connection.execute(
+                        "SELECT * FROM kcs_rematch_runs WHERE id = ?",
+                        (existing["id"],),
+                    ).fetchone()
+                    return self._public_kcs_rematch_run(refreshed)
                 return self._public_kcs_rematch_run(existing)
             if str(project["kcs_revision"] or "") == target_revision:
                 return None
