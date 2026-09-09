@@ -229,32 +229,22 @@ def test_store_startup_repairs_legacy_no_kcs_match_selection(tmp_path):
     assert history_after_second_start == history_after
 
 
-def test_management_delete_requires_a_written_reason(tmp_path):
+def test_management_delete_allows_empty_review_note(tmp_path):
     store, project_id = _store_with_project(tmp_path)
-
-    with pytest.raises(ValueError, match="검토의견"):
-        store.update_decision(
-            project_id,
-            "clause",
-            "delete",
-            "",
-            "",
-            None,
-            decision_reason="management_decision",
-        )
 
     saved = store.update_decision(
         project_id,
         "clause",
         "delete",
         "",
-        "현장 운영 범위에서 제외하기로 협의함",
+        "",
         None,
         decision_reason="management_decision",
     )
 
     assert saved is not None
     assert saved["decision_reason"] == "management_decision"
+    assert saved["review_note"] == ""
     project = store.get_project(project_id)
     assert project is not None
     assert project["invalid_decision_count"] == 0

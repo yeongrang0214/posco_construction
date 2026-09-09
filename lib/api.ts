@@ -56,7 +56,7 @@ export const DECISION_REASON_OPTIONS: Record<Exclude<Decision, null>, { value: D
   ],
   delete: [
     { value: 'fully_covered_by_kcs', label: 'KCS와 중복' },
-    { value: 'management_decision', label: '불필요 문구·담당자 판단' },
+    { value: 'management_decision', label: '담당자 의견' },
   ],
   hold: [],
 };

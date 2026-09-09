@@ -2842,7 +2842,6 @@ class Store:
                             'obsolete_requirement', 'out_of_scope',
                             'editorial_cleanup', 'management_decision'
                         )
-                        OR (decision_reason = 'management_decision' AND TRIM(review_note) = '')
                     ))
                     OR (decision = 'hold' AND decision_reason NOT IN (
                         'needs_expert_review', 'candidate_uncertain', 'kcs_conflict'
@@ -4197,8 +4196,6 @@ class Store:
                                     'obsolete_requirement', 'out_of_scope',
                                     'editorial_cleanup', 'management_decision'
                                 )
-                                OR (c.decision_reason = 'management_decision'
-                                    AND TRIM(c.review_note) = '')
                             ))
                             OR (c.decision = 'hold' AND c.decision_reason NOT IN (
                                 'needs_expert_review', 'candidate_uncertain', 'kcs_conflict'
@@ -5451,13 +5448,6 @@ class Store:
         if no_kcs_match:
             coverage_confirmed = False
             selected_candidate_id = None
-        if (
-            decision == "delete"
-            and decision_reason == "management_decision"
-            and not review_note.strip()
-        ):
-            raise ValueError("담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.")
-
         if decision == "keep" and decision_reason == "partial_overlap_residual":
             residual = " ".join(edited_content.split())
             original = " ".join(

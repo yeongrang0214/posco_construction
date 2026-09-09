@@ -1808,10 +1808,6 @@ export function SpecReviewApp() {
       setError('삭제하려면 KCS 근거를 선택하고 전체 요구사항 포함 여부를 확인해 주세요.');
       return false;
     }
-    if (nextDecision === 'delete' && nextReason === 'management_decision' && !nextReviewNote.trim()) {
-      setError('담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.');
-      return false;
-    }
     const requestProjectId = project.id;
     const requestClauseId = detail.id;
     detailSavingRef.current = true;
@@ -2030,7 +2026,7 @@ export function SpecReviewApp() {
       await saveCurrent('delete', true, deleteReason, true);
       return;
     }
-    await saveCurrent('delete', false, deleteReason, true, reviewNote.trim() || '담당자 직접 삭제 판정');
+    await saveCurrent('delete', false, deleteReason, true);
   }
 
   async function navigateTo(clauseId: string) {
@@ -2961,7 +2957,7 @@ export function SpecReviewApp() {
                             </optgroup>
                             <optgroup label="삭제">
                               <option value="fully_covered_by_kcs">KCS와 중복</option>
-                              <option value="management_decision">불필요 문구·담당자 판단</option>
+                              <option value="management_decision">담당자 의견</option>
                             </optgroup>
                           </select>
                         </label>
@@ -2979,7 +2975,7 @@ export function SpecReviewApp() {
                         <Textarea id="edited-content" className="mt-2 min-h-36 text-base leading-7" value={editedContent} onChange={(event) => updateDraft(() => setEditedContent(event.target.value))} disabled={decision === 'delete' || detailMutationBusy || reviewMutationLocked} />
                         {decision === 'delete' && <p className="mt-2 text-sm text-muted-foreground">삭제 판정 조항은 DOCX에서 제외되지만 원문과 판정 근거는 보존됩니다.</p>}
 
-                        <label className="mt-4 block text-sm font-medium" htmlFor="review-note">검토의견</label>
+                        <label className="mt-4 block text-sm font-medium" htmlFor="review-note">검토의견 <span className="font-normal text-muted-foreground">(선택)</span></label>
                         <Textarea id="review-note" className="mt-2 min-h-24" value={reviewNote} onChange={(event) => updateDraft(() => setReviewNote(event.target.value))} placeholder="포스코 특화 사유, 수치 차이, 추가 확인사항 등을 기록하세요." disabled={detailMutationBusy || reviewMutationLocked} />
                         <div className="mt-4 flex items-center justify-between gap-3">
                           <span className="text-sm text-muted-foreground">{saving ? '저장 중…' : dirty ? '저장되지 않은 변경사항' : savedAt ? `${savedAt} 저장됨` : detail.reviewed_at ? '저장된 판정' : '미검토'}</span>
