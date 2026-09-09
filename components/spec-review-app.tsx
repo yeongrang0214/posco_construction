@@ -3171,16 +3171,17 @@ export function SpecReviewApp() {
                   <section className="mb-4 rounded-lg border border-amber-300/70 bg-amber-50/65 p-4 dark:bg-amber-950/20" aria-labelledby="standards-analysis-title">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p id="standards-analysis-title" className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-amber-700" />규격 최신성·수치 검사</p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">포스코 원문에 포함된 규격과 수치·단위를 현재 KCS 후보에서 다시 확인합니다.</p>
+                        <p id="standards-analysis-title" className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-amber-700" />규격·수치·핵심 조건 검사</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">규격과 수치·단위는 KCS 후보와 비교하고, 의무·금지·예외 문구는 빠뜨리지 않도록 표시합니다.</p>
                       </div>
                       <Badge variant={standardsAnalysis.requiresConfirmation ? 'outline' : 'secondary'}>{standardsAnalysis.requiresConfirmation ? '담당자 확인 필요' : 'KCS 후보 표기 일치'}</Badge>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {standardsAnalysis.references.map((item) => <Badge key={`standard-${item.raw}`} variant={item.foundInKcs ? 'secondary' : 'outline'}>{item.raw} · {item.foundInKcs ? 'KCS 후보에서 확인' : '최신성 확인 필요'}</Badge>)}
                       {standardsAnalysis.measurements.map((item) => <Badge key={`measurement-${item.raw}`} variant={item.foundInKcs ? 'secondary' : 'outline'}>{item.raw} · {item.foundInKcs ? 'KCS와 일치' : 'KCS와 차이 확인'}</Badge>)}
+                      {standardsAnalysis.reviewSignals.map((signal) => <Badge key={signal} variant="outline">{signal} · 포괄 여부 확인</Badge>)}
                     </div>
-                    <p className="mt-3 text-xs leading-5 text-muted-foreground">이 검사는 KCS 후보의 수록 표기를 비교합니다. 규격 자체의 개정·폐지 여부는 공식 규격 원문으로 최종 확인해야 합니다.</p>
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">표시 자체가 삭제 금지를 뜻하지 않습니다. KCS가 내용을 전부 대체하거나 담당자가 불필요 문구로 판단하면 삭제할 수 있습니다. 외부 규격의 개정·폐지 여부와 KCS와 다른 수치는 최종 확인이 필요합니다.</p>
                     {standardsAnalysis.requiresConfirmation && (
                       <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-background/80 p-3 text-sm">
                         <input id="standards-confirmed" type="checkbox" className="mt-0.5 size-4" aria-label="규격 최신성과 적용 수치 확인" checked={standardsConfirmed} onChange={(event) => setStandardsConfirmed(event.target.checked)} disabled={detailMutationBusy || reviewMutationLocked} />
