@@ -1,4 +1,4 @@
-import { SpecReviewApp } from '@/components/spec-review-app';
+import { SpecReviewApp } from '@/components/spec-review-app-release';
 
 export default function Home() {
   return <SpecReviewApp />;
