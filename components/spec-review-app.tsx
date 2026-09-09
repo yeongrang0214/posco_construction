@@ -1785,10 +1785,12 @@ export function SpecReviewApp() {
     coverageOverride?: boolean,
     reasonOverride?: string,
     acknowledgeImpact = false,
+    reviewNoteOverride?: string,
   ): Promise<boolean> {
     if (!project || !detail || saving || detailSavingRef.current) return false;
     const nextDecision = decisionOverride === undefined ? decision : decisionOverride;
     const nextReason = nextDecision === null ? '' : (reasonOverride ?? decisionReason);
+    const nextReviewNote = reviewNoteOverride ?? reviewNote;
     const kcsBasedDelete = nextDecision === 'delete' && nextReason === 'fully_covered_by_kcs';
     const noKcsMatch = nextDecision === 'keep' && nextReason === 'no_kcs_match';
     const nextCoverageConfirmed = kcsBasedDelete
@@ -1806,7 +1808,7 @@ export function SpecReviewApp() {
       setError('삭제하려면 KCS 근거를 선택하고 전체 요구사항 포함 여부를 확인해 주세요.');
       return false;
     }
-    if (nextDecision === 'delete' && nextReason === 'management_decision' && !reviewNote.trim()) {
+    if (nextDecision === 'delete' && nextReason === 'management_decision' && !nextReviewNote.trim()) {
       setError('담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.');
       return false;
     }
@@ -1819,7 +1821,7 @@ export function SpecReviewApp() {
       const result = await api.saveClause(project.id, detail.id, {
         decision: nextDecision,
         edited_content: editedContent,
-        review_note: reviewNote,
+        review_note: nextReviewNote,
         decision_reason: nextReason,
         coverage_confirmed: nextCoverageConfirmed,
         selected_candidate_id: (nextDecision === 'delete' && !kcsBasedDelete) || noKcsMatch
@@ -1836,6 +1838,7 @@ export function SpecReviewApp() {
       }
       setDetail(result.clause);
       setDecision(result.clause.decision);
+      setReviewNote(result.clause.review_note || '');
       setDecisionReason(result.clause.decision_reason || '');
       setCoverageConfirmed(Boolean(result.clause.coverage_confirmed));
       setSelectedCandidateId(result.clause.selected_candidate_id);
@@ -2000,46 +2003,34 @@ export function SpecReviewApp() {
       setError('목차와 구조 제목은 판정 대상이 아닙니다.');
       return;
     }
-    if (value === 'delete') {
-      if (!isDecisionReason('delete', decisionReason)) {
-        setError('삭제 사유를 먼저 선택해 주세요.');
-        return;
-      }
-      if (decisionReason === 'management_decision' && !reviewNote.trim()) {
-        setError('담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.');
-        return;
-      }
-      if (decisionReason !== 'fully_covered_by_kcs') {
-        await saveCurrent('delete', false, decisionReason, true);
-        return;
-      }
+    if (value === 'keep') {
+      const keepReason = ['posco_specific', 'no_kcs_match'].includes(decisionReason)
+        ? decisionReason
+        : 'posco_specific';
+      await saveCurrent('keep', false, keepReason, true);
+      return;
+    }
+    if (value === 'hold') {
+      await saveCurrent('hold', false, 'needs_expert_review', true);
+      return;
+    }
+    const deleteReason = decisionReason === 'fully_covered_by_kcs'
+      ? 'fully_covered_by_kcs'
+      : 'management_decision';
+    if (deleteReason === 'fully_covered_by_kcs') {
       if (!selectedCandidateId) {
-        setError('삭제 근거로 사용할 KCS 후보를 먼저 선택해 주세요.');
+        setError('KCS 중복 삭제 사유를 선택한 경우 근거 KCS 후보를 선택해 주세요. 사유를 비워두면 바로 삭제할 수 있습니다.');
         return;
       }
-      if (detailNeedsKcsReview && !detail?.coverage_analysis) {
-        setError('KCS가 개정된 삭제 조항은 GPT 전체포괄 분석을 다시 실행한 뒤 재확정해 주세요.');
+      const coverage = detail?.coverage_analysis;
+      if (!coverage?.deletion_safe || !coverage.evidence_candidate_ids.includes(selectedCandidateId)) {
+        setError('KCS 중복 근거가 충분하지 않습니다. 사유를 비워두거나 “담당자 판단”을 선택하면 삭제할 수 있습니다.');
         return;
       }
-      if (detail?.coverage_analysis && !detail.coverage_analysis.deletion_safe) {
-        setError('KCS 전체포괄 근거로는 삭제할 수 없습니다. 그래도 삭제하려면 삭제 사유를 “담당자 판단”으로 바꾸고 검토의견을 입력해 주세요.');
-        return;
-      }
-      if (
-        detail?.coverage_analysis
-        && !detail.coverage_analysis.evidence_candidate_ids.includes(selectedCandidateId)
-      ) {
-        setError('GPT 전체포괄 분석에서 실제 근거로 사용된 KCS 후보를 선택해 주세요.');
-        return;
-      }
-      await saveCurrent('delete', true, decisionReason, true);
+      await saveCurrent('delete', true, deleteReason, true);
       return;
     }
-    if (!isDecisionReason(value, decisionReason)) {
-      setError(`${value === 'keep' ? '남김' : '보류'} 사유를 먼저 선택해 주세요.`);
-      return;
-    }
-    await saveCurrent(value, false, undefined, true);
+    await saveCurrent('delete', false, deleteReason, true, reviewNote.trim() || '담당자 직접 삭제 판정');
   }
 
   async function navigateTo(clauseId: string) {
@@ -2951,7 +2942,7 @@ export function SpecReviewApp() {
                       <>
                         <p className="mb-3 text-sm font-medium">담당자 판정</p>
                         <label className="mb-3 block text-sm font-medium" htmlFor="decision-reason">
-                          판정 사유
+                          판정 사유 <span className="font-normal text-muted-foreground">(선택)</span>
                           <select
                             id="decision-reason"
                             className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
@@ -2963,14 +2954,15 @@ export function SpecReviewApp() {
                             })}
                             disabled={detailMutationBusy || reviewMutationLocked}
                           >
-                            <option value="">사유를 선택하세요</option>
-                            {(['keep', 'hold', 'delete'] as const).map((value) => (
-                              <optgroup key={value} label={value === 'keep' ? '남김' : value === 'hold' ? '보류' : '삭제'}>
-                                {DECISION_REASON_OPTIONS[value].map((option) => (
-                                  <option key={option.value} value={option.value}>{option.label}</option>
-                                ))}
-                              </optgroup>
-                            ))}
+                            <option value="">선택하지 않음</option>
+                            <optgroup label="남김">
+                              <option value="posco_specific">포스코 고유·강화 기준</option>
+                              <option value="no_kcs_match">대응 KCS 없음</option>
+                            </optgroup>
+                            <optgroup label="삭제">
+                              <option value="fully_covered_by_kcs">KCS와 중복</option>
+                              <option value="management_decision">불필요 문구·담당자 판단</option>
+                            </optgroup>
                           </select>
                         </label>
                         <fieldset className="grid grid-cols-3 gap-2">
@@ -2980,11 +2972,8 @@ export function SpecReviewApp() {
                           <Button variant={decision === 'hold' ? 'secondary' : 'outline'} aria-pressed={decision === 'hold'} onClick={() => chooseDecision('hold')} disabled={detailMutationBusy || reviewMutationLocked}><Clock3 />{detailNeedsKcsReview && decision === 'hold' ? '보류 유지·확인' : '보류'}</Button>
                         </fieldset>
                         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                          KCS 중복 삭제만 본문 후보가 필요하며, KCS 외 삭제는 선택한 사유로 기록됩니다.
+                          사유는 선택하지 않아도 됩니다. KCS 중복을 선택한 경우에만 근거 후보 확인이 필요합니다.
                         </p>
-                        {decisionReason === 'management_decision' && !reviewNote.trim() && (
-                          <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">담당자 판단 삭제는 아래 검토의견에 사유를 입력해야 합니다.</p>
-                        )}
 
                         <label className="mt-4 block text-sm font-medium" htmlFor="edited-content">간소화 시방서 출력문</label>
                         <Textarea id="edited-content" className="mt-2 min-h-36 text-base leading-7" value={editedContent} onChange={(event) => updateDraft(() => setEditedContent(event.target.value))} disabled={decision === 'delete' || detailMutationBusy || reviewMutationLocked} />
