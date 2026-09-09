@@ -300,14 +300,6 @@ function requirementStatusLabel(status: NonNullable<ClauseDetail['coverage_analy
   return '확인 필요';
 }
 
-type ProjectListFilter =
-  | 'active'
-  | 'approval_pending'
-  | 'changes_requested'
-  | 'current'
-  | 'legacy'
-  | 'kcs_impact';
-
 function uploadProgress(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -419,8 +411,7 @@ function ProjectSelector({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [filter, setFilter] = useState<ProjectListFilter>('active');
-  const [discipline, setDiscipline] = useState<ProjectDiscipline | 'all'>('all');
+  const [discipline, setDiscipline] = useState<Extract<ProjectDiscipline, 'architecture' | 'mechanical'>>('architecture');
   const [catalogProjects, setCatalogProjects] = useState<Project[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -481,14 +472,7 @@ function ProjectSelector({
         const result = await api.projects({
           search: debouncedQuery,
           archiveStatus: 'active',
-          parserStatus: filter === 'current' ? 'current' : filter === 'legacy' ? 'legacy' : undefined,
-          kcsImpactOnly: filter === 'kcs_impact',
-          reviewStatus: filter === 'approval_pending'
-            ? 'submitted'
-            : filter === 'changes_requested'
-              ? 'changes_requested'
-              : undefined,
-          discipline: discipline === 'all' ? undefined : discipline,
+          discipline,
           limit: PROJECT_CATALOG_PAGE_SIZE,
         });
         if (cancelled || requestSequence.current !== sequence) return;
@@ -506,7 +490,7 @@ function ProjectSelector({
     void loadFirstPage();
 
     return () => { cancelled = true; };
-  }, [debouncedQuery, discipline, filter, open, refreshKey, retryKey]);
+  }, [debouncedQuery, discipline, open, refreshKey, retryKey]);
 
   const currentCatalogProject = currentCatalogMetadata?.projectId === currentProject.id
     && currentCatalogMetadata.refreshKey === refreshKey
@@ -516,14 +500,10 @@ function ProjectSelector({
         is_latest_for_title: currentCatalogMetadata.is_latest_for_title,
       }
     : currentProject;
-  const currentMatchesFilter = !currentCatalogProject.archived_at && (
-      filter === 'active'
-      || (filter === 'current' && !currentCatalogProject.requires_source_reupload)
-      || (filter === 'legacy' && currentCatalogProject.requires_source_reupload)
-      || (filter === 'kcs_impact' && Boolean(currentCatalogProject.unacknowledged_kcs_impact_count))
-      || (filter === 'approval_pending' && currentCatalogProject.status === 'submitted')
-      || (filter === 'changes_requested' && currentCatalogProject.status === 'changes_requested')
-    );
+  const currentMatchesFilter = !currentCatalogProject.archived_at
+    && (discipline === 'mechanical'
+      ? currentCatalogProject.source_filename.startsWith('건축설비')
+      : currentCatalogProject.source_filename.startsWith('건축_'));
   const showCurrentSeparately = !debouncedQuery
     && currentMatchesFilter
     && !catalogProjects.some((item) => item.id === currentCatalogProject.id);
@@ -547,14 +527,7 @@ function ProjectSelector({
       const result = await api.projects({
         search: debouncedQuery,
         archiveStatus: 'active',
-        parserStatus: filter === 'current' ? 'current' : filter === 'legacy' ? 'legacy' : undefined,
-        kcsImpactOnly: filter === 'kcs_impact',
-        reviewStatus: filter === 'approval_pending'
-          ? 'submitted'
-          : filter === 'changes_requested'
-              ? 'changes_requested'
-              : undefined,
-        discipline: discipline === 'all' ? undefined : discipline,
+        discipline,
         limit: PROJECT_CATALOG_PAGE_SIZE,
         cursor: nextCursor,
       });
@@ -605,26 +578,13 @@ function ProjectSelector({
           </label>
           <div className="flex flex-wrap items-center gap-1" aria-label="시방서 분야 필터">
             <span className="mr-1 text-xs font-medium text-muted-foreground">분야</span>
-            {([['all', '전체'], ['architecture', '건축'], ['mechanical', '건축설비'], ['electrical', '전기']] as [ProjectDiscipline | 'all', string][]).map(([value, label]) => (
+            {([['architecture', '건축'], ['mechanical', '건축설비']] as [Extract<ProjectDiscipline, 'architecture' | 'mechanical'>, string][]).map(([value, label]) => (
               <Button
                 key={value}
                 size="sm"
                 variant={discipline === value ? 'secondary' : 'ghost'}
                 aria-pressed={discipline === value}
                 onClick={() => setDiscipline(value)}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-1" aria-label="프로젝트 상태 필터">
-            {([['active', '전체'], ['approval_pending', '승인 대기'], ['changes_requested', '수정 요청'], ['kcs_impact', 'KCS 재검토'], ['current', '현행 파서'], ['legacy', '재업로드']] as [ProjectListFilter, string][]).map(([value, label]) => (
-              <Button
-                key={value}
-                size="sm"
-                variant={filter === value ? 'secondary' : 'ghost'}
-                aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
               >
                 {label}
               </Button>
