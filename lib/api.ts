@@ -51,24 +51,14 @@ export type DecisionReason =
 
 export const DECISION_REASON_OPTIONS: Record<Exclude<Decision, null>, { value: DecisionReason; label: string }[]> = {
   keep: [
-    { value: 'posco_specific', label: '포스코 고유기준' },
-    { value: 'posco_stricter', label: '포스코 강화기준' },
-    { value: 'partial_overlap_residual', label: '중복 제거 후 잔여기준 유지' },
+    { value: 'posco_specific', label: '포스코 고유·강화 기준' },
     { value: 'no_kcs_match', label: '대응 KCS 없음' },
   ],
   delete: [
-    { value: 'fully_covered_by_kcs', label: 'KCS가 전체 요구사항 포함' },
-    { value: 'internal_duplicate', label: '포스코 시방서 내부 중복' },
-    { value: 'obsolete_requirement', label: '현재 적용하지 않는 기준' },
-    { value: 'out_of_scope', label: '적용 범위 밖의 내용' },
-    { value: 'editorial_cleanup', label: '오기·불완전 문구 정리' },
-    { value: 'management_decision', label: '담당자 판단 삭제' },
+    { value: 'fully_covered_by_kcs', label: 'KCS와 중복' },
+    { value: 'management_decision', label: '불필요 문구·담당자 판단' },
   ],
-  hold: [
-    { value: 'needs_expert_review', label: '전문가 검토 필요' },
-    { value: 'candidate_uncertain', label: '후보 불확실' },
-    { value: 'kcs_conflict', label: 'KCS와 충돌' },
-  ],
+  hold: [],
 };
 
 export function isDecisionReason(decision: Decision, reason: string): reason is DecisionReason {

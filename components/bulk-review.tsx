@@ -496,14 +496,10 @@ export function BulkReview({
   }
 
   function saveDecision(item: BulkReviewItem, decision: Exclude<Decision, null>) {
-    const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
-    if (!isDecisionReason(decision, reason)) {
-      setRowErrors((current) => ({
-        ...current,
-        [item.id]: `${decision === 'keep' ? '남김' : '보류'} 사유를 먼저 선택해 주세요.`,
-      }));
-      return;
-    }
+    const selectedReason = rowReasons[item.id] ?? item.decision_reason ?? '';
+    const reason = isDecisionReason(decision, selectedReason)
+      ? selectedReason
+      : decision === 'keep' ? 'posco_specific' : 'needs_expert_review';
     void saveRow(item, {
       decision,
       decision_reason: reason,
@@ -514,14 +510,8 @@ export function BulkReview({
   }
 
   function requestDelete(item: BulkReviewItem) {
-    const reason = rowReasons[item.id] ?? item.decision_reason ?? '';
-    if (!isDecisionReason('delete', reason)) {
-      setRowErrors((current) => ({
-        ...current,
-        [item.id]: '삭제 사유를 먼저 선택해 주세요.',
-      }));
-      return;
-    }
+    const selectedReason = rowReasons[item.id] ?? item.decision_reason ?? '';
+    const reason = isDecisionReason('delete', selectedReason) ? selectedReason : 'management_decision';
     const kcsBasedDelete = reason === 'fully_covered_by_kcs';
     if (kcsBasedDelete && needsKcsImpactReview(item)) {
       setRowErrors((current) => ({
@@ -534,13 +524,6 @@ export function BulkReview({
       setRowErrors((current) => ({
         ...current,
         [item.id]: '삭제 근거로 사용할 KCS 후보를 먼저 선택해 주세요.',
-      }));
-      return;
-    }
-    if (reason === 'management_decision' && !item.review_note.trim()) {
-      setRowErrors((current) => ({
-        ...current,
-        [item.id]: '담당자 판단 삭제는 상세 비교에서 검토의견을 입력한 뒤 저장해 주세요.',
       }));
       return;
     }
@@ -795,11 +778,11 @@ export function BulkReview({
                       <div className="rounded-lg bg-muted/55 p-3 text-sm leading-6 text-muted-foreground"><Badge variant="outline" className="mb-2">판정 제외</Badge><p>뒤 조항의 문맥으로 유지됩니다.</p></div>
                     ) : <>
                       <label className="mb-3 block text-xs font-medium text-muted-foreground">
-                        판정 사유
+                        판정 사유 <span className="font-normal text-muted-foreground">(선택)</span>
                         <select className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground" value={reason} onChange={(event) => chooseReason(item, event.target.value)} disabled={rowDecisionBusy}>
-                          <option value="">사유를 선택하세요</option>
-                          {(['keep', 'hold', 'delete'] as const).map((decision) => (
-                            <optgroup key={decision} label={decision === 'keep' ? '남김' : decision === 'hold' ? '보류' : '삭제'}>
+                          <option value="">선택하지 않음</option>
+                          {(['keep', 'delete'] as const).map((decision) => (
+                            <optgroup key={decision} label={decision === 'keep' ? '남김' : '삭제'}>
                               {DECISION_REASON_OPTIONS[decision].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                             </optgroup>
                           ))}
@@ -813,7 +796,6 @@ export function BulkReview({
                       <div className="mt-4 space-y-2 text-xs leading-5 text-muted-foreground">
                         <p>KCS 중복 삭제만 본문 후보가 필요하며, KCS 외 삭제는 선택한 사유로 기록됩니다.</p>
                         <p>제목 후보는 위치 탐색용이며 삭제 근거로 사용할 수 없습니다.</p>
-                        {reason === 'management_decision' && !item.review_note.trim() && <p className="text-amber-700 dark:text-amber-300">담당자 판단 삭제는 상세 비교에서 검토의견을 입력해야 합니다.</p>}
                         {item.decision && <Badge variant="outline">현재 판정 · {item.decision === 'keep' ? '남김' : item.decision === 'delete' ? '삭제' : '보류'}</Badge>}
                       </div>
                     </>}
@@ -948,16 +930,16 @@ export function BulkReview({
                     ) : (
                       <>
                         <label className="mb-3 block text-xs font-medium text-muted-foreground">
-                          판정 사유
+                          판정 사유 <span className="font-normal text-muted-foreground">(선택)</span>
                           <select
                             className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground"
                             value={rowReasons[item.id] ?? item.decision_reason ?? ''}
                             onChange={(event) => chooseReason(item, event.target.value)}
                             disabled={rowDecisionBusy}
                           >
-                            <option value="">사유를 선택하세요</option>
-                            {(['keep', 'hold', 'delete'] as const).map((decision) => (
-                              <optgroup key={decision} label={decision === 'keep' ? '남김' : decision === 'hold' ? '보류' : '삭제'}>
+                            <option value="">선택하지 않음</option>
+                            {(['keep', 'delete'] as const).map((decision) => (
+                              <optgroup key={decision} label={decision === 'keep' ? '남김' : '삭제'}>
                                 {DECISION_REASON_OPTIONS[decision].map((option) => (
                                   <option key={option.value} value={option.value}>{option.label}</option>
                                 ))}
