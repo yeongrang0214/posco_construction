@@ -2056,10 +2056,6 @@ export function SpecReviewApp() {
         setError('담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.');
         return;
       }
-      if (standardsAnalysis.requiresConfirmation && !standardsConfirmed) {
-        setError('규격 또는 수치·단위 차이가 있는 조항입니다. 최신성 및 적용값을 확인한 뒤 확인란을 선택해 주세요.');
-        return;
-      }
       if (decisionReason !== 'fully_covered_by_kcs') {
         await saveCurrent('delete', false, decisionReason, true);
         return;
@@ -2073,7 +2069,7 @@ export function SpecReviewApp() {
         return;
       }
       if (detail?.coverage_analysis && !detail.coverage_analysis.deletion_safe) {
-        setError('GPT 전체포괄 분석에서 포스코 잔여 요구사항 또는 불확실성이 확인되어 삭제할 수 없습니다.');
+        setError('KCS 전체포괄 근거로는 삭제할 수 없습니다. 그래도 삭제하려면 삭제 사유를 “담당자 판단”으로 바꾸고 검토의견을 입력해 주세요.');
         return;
       }
       if (
@@ -3027,7 +3023,7 @@ export function SpecReviewApp() {
                         <fieldset className="grid grid-cols-3 gap-2">
                           <legend className="sr-only">담당자 판정</legend>
                           <Button variant={decision === 'keep' ? 'default' : 'outline'} aria-pressed={decision === 'keep'} onClick={() => chooseDecision('keep')} disabled={detailMutationBusy || reviewMutationLocked}><CheckCircle2 />{detailNeedsKcsReview && decision === 'keep' ? '남김 유지·확인' : '남김'}</Button>
-                          <Button variant={decision === 'delete' ? 'destructive' : 'outline'} aria-pressed={decision === 'delete'} onClick={() => chooseDecision('delete')} disabled={detailMutationBusy || reviewMutationLocked || (standardsAnalysis.requiresConfirmation && !standardsConfirmed)}><Trash2 />삭제</Button>
+                          <Button variant={decision === 'delete' ? 'destructive' : 'outline'} aria-pressed={decision === 'delete'} onClick={() => chooseDecision('delete')} disabled={detailMutationBusy || reviewMutationLocked}><Trash2 />삭제</Button>
                           <Button variant={decision === 'hold' ? 'secondary' : 'outline'} aria-pressed={decision === 'hold'} onClick={() => chooseDecision('hold')} disabled={detailMutationBusy || reviewMutationLocked}><Clock3 />{detailNeedsKcsReview && decision === 'hold' ? '보류 유지·확인' : '보류'}</Button>
                         </fieldset>
                         <p className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -3185,7 +3181,7 @@ export function SpecReviewApp() {
                     {standardsAnalysis.requiresConfirmation && (
                       <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-background/80 p-3 text-sm">
                         <input id="standards-confirmed" type="checkbox" className="mt-0.5 size-4" aria-label="규격 최신성과 적용 수치 확인" checked={standardsConfirmed} onChange={(event) => setStandardsConfirmed(event.target.checked)} disabled={detailMutationBusy || reviewMutationLocked} />
-                        <label htmlFor="standards-confirmed" className="cursor-pointer"><strong>담당자가 규격 최신성과 적용 수치를 확인했습니다.</strong><span className="mt-1 block text-xs text-muted-foreground">확인 전에는 이 조항을 삭제할 수 없습니다.</span></label>
+                        <label htmlFor="standards-confirmed" className="cursor-pointer"><strong>담당자가 규격 최신성과 적용 수치를 확인했습니다.</strong><span className="mt-1 block text-xs text-muted-foreground">선택하지 않아도 삭제할 수 있으며, 확인 여부를 화면에서 점검하기 위한 항목입니다.</span></label>
                       </div>
                     )}
                   </section>
