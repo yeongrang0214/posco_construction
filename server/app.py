@@ -1349,7 +1349,7 @@ def get_kcs_impact(project_id: str):
 async def start_kcs_rematch(project_id: str):
     project = _project_or_404(project_id)
     try:
-        run = await asyncio.to_thread(store.ensure_kcs_rematch, project_id)
+        run = await asyncio.to_thread(store.force_kcs_rematch, project_id)
         if run and run["status"] in {"failed", "superseded"}:
             run = await asyncio.to_thread(store.retry_kcs_rematch, run["id"])
     except ValueError as exc:

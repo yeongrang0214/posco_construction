@@ -1628,6 +1628,60 @@ class Store:
             ).fetchone()
             return self._public_kcs_rematch_run(row)
 
+    def force_kcs_rematch(self, project_id: str) -> dict[str, Any]:
+        """Queue a fresh run when the matcher changed but the KCS revision did not."""
+        run = self.ensure_kcs_rematch(project_id)
+        if run is not None and run["status"] in {"pending", "running"}:
+            return run
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if not project:
+                raise KCSRematchNotFoundError("검토 프로젝트를 찾을 수 없습니다.")
+            if project["parser_version"] != CURRENT_PARSER_VERSION:
+                raise KCSRematchConflictError(
+                    "이 프로젝트는 이전 문서 해석기로 생성되어 원본 시방서를 다시 업로드해야 합니다."
+                )
+            target_snapshot, target_revision = self._current_kcs_target(connection)
+            if not target_snapshot or not target_revision:
+                raise KCSRematchConflictError("현재 KCS 개정 정보가 없습니다.")
+            existing = connection.execute(
+                "SELECT * FROM kcs_rematch_runs WHERE project_id=? AND target_revision=?",
+                (project_id, target_revision),
+            ).fetchone()
+            if existing:
+                connection.execute(
+                    "DELETE FROM kcs_clause_impacts WHERE run_id = ?", (existing["id"],)
+                )
+                connection.execute(
+                    """
+                    UPDATE kcs_rematch_runs
+                    SET from_revision=?,target_snapshot=?,status='pending',
+                        expected_state_sha256='',matcher_signature_json='{}',
+                        total_clauses=0,matched_count=0,material_change_count=0,
+                        review_required_count=0,error='',queued_at=?,started_at=NULL,finished_at=NULL
+                    WHERE id=?
+                    """,
+                    (str(project["kcs_revision"] or ""), target_snapshot, now, existing["id"]),
+                )
+                run_id = existing["id"]
+            else:
+                run_id = self._queue_kcs_rematch(
+                    connection,
+                    project_id,
+                    str(project["kcs_revision"] or ""),
+                    target_snapshot,
+                    target_revision,
+                    now,
+                )
+            queued = connection.execute(
+                "SELECT * FROM kcs_rematch_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            return self._public_kcs_rematch_run(queued)
+
     def get_kcs_rematch_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as connection:
             row = connection.execute(
