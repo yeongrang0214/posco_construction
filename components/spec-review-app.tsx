@@ -79,6 +79,7 @@ import {
   UploadJob,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { analyzeStandards } from '@/lib/standards-analysis';
 
 type StatusFilter = 'all' | 'unreviewed' | 'keep' | 'delete' | 'hold';
 type ReviewMode = 'business' | 'quality';
@@ -984,6 +985,7 @@ export function SpecReviewApp() {
   const [reviewNote, setReviewNote] = useState('');
   const [decisionReason, setDecisionReason] = useState('');
   const [coverageConfirmed, setCoverageConfirmed] = useState(false);
+  const [standardsConfirmed, setStandardsConfirmed] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [candidateTab, setCandidateTab] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -1267,6 +1269,7 @@ export function SpecReviewApp() {
         setReviewNote(clause.review_note || '');
         setDecisionReason(clause.decision_reason || '');
         setCoverageConfirmed(Boolean(clause.coverage_confirmed));
+        setStandardsConfirmed(false);
         setSelectedCandidateId(clause.selected_candidate_id);
         const preferredCandidateId = qualityItem?.relevant_candidate_id;
         setCandidateTab(
@@ -2053,6 +2056,10 @@ export function SpecReviewApp() {
         setError('담당자 판단으로 삭제하려면 검토의견에 삭제 사유를 입력해 주세요.');
         return;
       }
+      if (standardsAnalysis.requiresConfirmation && !standardsConfirmed) {
+        setError('규격 또는 수치·단위 차이가 있는 조항입니다. 최신성 및 적용값을 확인한 뒤 확인란을 선택해 주세요.');
+        return;
+      }
       if (decisionReason !== 'fully_covered_by_kcs') {
         await saveCurrent('delete', false, decisionReason, true);
         return;
@@ -2404,6 +2411,12 @@ export function SpecReviewApp() {
     )),
   );
   const detailNeedsKcsReview = unresolvedKcsImpact(detail);
+  const standardsCandidates = detail
+    ? selectedCandidateId
+      ? detail.candidates.filter((candidate) => candidate.id === selectedCandidateId)
+      : detail.candidates
+    : [];
+  const standardsAnalysis = analyzeStandards(detail?.content || detail?.title || '', standardsCandidates);
   const detailMutationBusy = saving
     || switchingProject
     || structureBusy
@@ -3014,7 +3027,7 @@ export function SpecReviewApp() {
                         <fieldset className="grid grid-cols-3 gap-2">
                           <legend className="sr-only">담당자 판정</legend>
                           <Button variant={decision === 'keep' ? 'default' : 'outline'} aria-pressed={decision === 'keep'} onClick={() => chooseDecision('keep')} disabled={detailMutationBusy || reviewMutationLocked}><CheckCircle2 />{detailNeedsKcsReview && decision === 'keep' ? '남김 유지·확인' : '남김'}</Button>
-                          <Button variant={decision === 'delete' ? 'destructive' : 'outline'} aria-pressed={decision === 'delete'} onClick={() => chooseDecision('delete')} disabled={detailMutationBusy || reviewMutationLocked}><Trash2 />삭제</Button>
+                          <Button variant={decision === 'delete' ? 'destructive' : 'outline'} aria-pressed={decision === 'delete'} onClick={() => chooseDecision('delete')} disabled={detailMutationBusy || reviewMutationLocked || (standardsAnalysis.requiresConfirmation && !standardsConfirmed)}><Trash2 />삭제</Button>
                           <Button variant={decision === 'hold' ? 'secondary' : 'outline'} aria-pressed={decision === 'hold'} onClick={() => chooseDecision('hold')} disabled={detailMutationBusy || reviewMutationLocked}><Clock3 />{detailNeedsKcsReview && decision === 'hold' ? '보류 유지·확인' : '보류'}</Button>
                         </fieldset>
                         <p className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -3154,6 +3167,28 @@ export function SpecReviewApp() {
                     ? '후보 탭을 바꿔 원문과 대조한 뒤, 왼쪽에서 현재 후보의 적정 여부를 판정하세요.'
                     : '유사도는 검토할 후보를 찾기 위한 검색 점수이며, 두 조항이 동일하거나 삭제 가능하다는 자동 판정이 아닙니다.'}
                 </p>
+                {reviewMode === 'business' && detail.source_type !== 'heading' && standardsAnalysis.hasProtectedContent && (
+                  <section className="mb-4 rounded-lg border border-amber-300/70 bg-amber-50/65 p-4 dark:bg-amber-950/20" aria-labelledby="standards-analysis-title">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p id="standards-analysis-title" className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4 text-amber-700" />규격 최신성·수치 검사</p>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">포스코 원문에 포함된 규격과 수치·단위를 현재 KCS 후보에서 다시 확인합니다.</p>
+                      </div>
+                      <Badge variant={standardsAnalysis.requiresConfirmation ? 'outline' : 'secondary'}>{standardsAnalysis.requiresConfirmation ? '담당자 확인 필요' : 'KCS 후보 표기 일치'}</Badge>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {standardsAnalysis.references.map((item) => <Badge key={`standard-${item.raw}`} variant={item.foundInKcs ? 'secondary' : 'outline'}>{item.raw} · {item.foundInKcs ? 'KCS 후보에서 확인' : '최신성 확인 필요'}</Badge>)}
+                      {standardsAnalysis.measurements.map((item) => <Badge key={`measurement-${item.raw}`} variant={item.foundInKcs ? 'secondary' : 'outline'}>{item.raw} · {item.foundInKcs ? 'KCS와 일치' : 'KCS와 차이 확인'}</Badge>)}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">이 검사는 KCS 후보의 수록 표기를 비교합니다. 규격 자체의 개정·폐지 여부는 공식 규격 원문으로 최종 확인해야 합니다.</p>
+                    {standardsAnalysis.requiresConfirmation && (
+                      <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-300 bg-background/80 p-3 text-sm">
+                        <input id="standards-confirmed" type="checkbox" className="mt-0.5 size-4" aria-label="규격 최신성과 적용 수치 확인" checked={standardsConfirmed} onChange={(event) => setStandardsConfirmed(event.target.checked)} disabled={detailMutationBusy || reviewMutationLocked} />
+                        <label htmlFor="standards-confirmed" className="cursor-pointer"><strong>담당자가 규격 최신성과 적용 수치를 확인했습니다.</strong><span className="mt-1 block text-xs text-muted-foreground">확인 전에는 이 조항을 삭제할 수 없습니다.</span></label>
+                      </div>
+                    )}
+                  </section>
+                )}
                 {reviewMode === 'business' && detail.source_type !== 'heading' && detail.candidates.length > 0 && (
                   <section className="mb-4 rounded-lg border border-primary/25 bg-primary/5 p-4" aria-labelledby="coverage-analysis-title" aria-busy={analyzingCoverage}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3271,6 +3306,7 @@ export function SpecReviewApp() {
                             updateDraft(() => {
                               setSelectedCandidateId(selected ? null : candidate.id);
                               setCoverageConfirmed(false);
+                              setStandardsConfirmed(false);
                             });
                           }}
                           aiAvailable={Boolean(config?.openai_available)}
