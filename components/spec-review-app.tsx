@@ -306,8 +306,7 @@ type ProjectListFilter =
   | 'changes_requested'
   | 'current'
   | 'legacy'
-  | 'kcs_impact'
-  | 'archived';
+  | 'kcs_impact';
 
 function uploadProgress(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -481,7 +480,7 @@ function ProjectSelector({
       try {
         const result = await api.projects({
           search: debouncedQuery,
-          archiveStatus: filter === 'archived' ? 'archived' : 'active',
+          archiveStatus: 'active',
           parserStatus: filter === 'current' ? 'current' : filter === 'legacy' ? 'legacy' : undefined,
           kcsImpactOnly: filter === 'kcs_impact',
           reviewStatus: filter === 'approval_pending'
@@ -517,15 +516,14 @@ function ProjectSelector({
         is_latest_for_title: currentCatalogMetadata.is_latest_for_title,
       }
     : currentProject;
-  const currentMatchesFilter = (filter === 'archived' && Boolean(currentCatalogProject.archived_at))
-    || (!currentCatalogProject.archived_at && (
+  const currentMatchesFilter = !currentCatalogProject.archived_at && (
       filter === 'active'
       || (filter === 'current' && !currentCatalogProject.requires_source_reupload)
       || (filter === 'legacy' && currentCatalogProject.requires_source_reupload)
       || (filter === 'kcs_impact' && Boolean(currentCatalogProject.unacknowledged_kcs_impact_count))
       || (filter === 'approval_pending' && currentCatalogProject.status === 'submitted')
       || (filter === 'changes_requested' && currentCatalogProject.status === 'changes_requested')
-    ));
+    );
   const showCurrentSeparately = !debouncedQuery
     && currentMatchesFilter
     && !catalogProjects.some((item) => item.id === currentCatalogProject.id);
@@ -548,7 +546,7 @@ function ProjectSelector({
     try {
       const result = await api.projects({
         search: debouncedQuery,
-        archiveStatus: filter === 'archived' ? 'archived' : 'active',
+        archiveStatus: 'active',
         parserStatus: filter === 'current' ? 'current' : filter === 'legacy' ? 'legacy' : undefined,
         kcsImpactOnly: filter === 'kcs_impact',
         reviewStatus: filter === 'approval_pending'
@@ -620,7 +618,7 @@ function ProjectSelector({
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-1" aria-label="프로젝트 상태 필터">
-            {([['active', '전체'], ['approval_pending', '승인 대기'], ['changes_requested', '수정 요청'], ['kcs_impact', 'KCS 재검토'], ['current', '현행 파서'], ['legacy', '재업로드'], ['archived', '보관됨']] as [ProjectListFilter, string][]).map(([value, label]) => (
+            {([['active', '전체'], ['approval_pending', '승인 대기'], ['changes_requested', '수정 요청'], ['kcs_impact', 'KCS 재검토'], ['current', '현행 파서'], ['legacy', '재업로드']] as [ProjectListFilter, string][]).map(([value, label]) => (
               <Button
                 key={value}
                 size="sm"
@@ -1105,12 +1103,7 @@ export function SpecReviewApp() {
           }
           setUploadJob(latestUploadJob);
         }
-        let initialProject: Project | undefined = normalized[0];
-        if (!initialProject) {
-          const archived = await api.projects({ archiveStatus: 'archived', limit: 1 });
-          if (cancelled) return;
-          initialProject = archived.projects[0] ? normalizeProject(archived.projects[0]) : undefined;
-        }
+        const initialProject: Project | undefined = normalized[0];
         if (initialProject) await openProject(initialProject.id);
       })
       .catch((cause: Error) => setError(`로컬 분석 서버에 연결할 수 없습니다. ${cause.message}`))
