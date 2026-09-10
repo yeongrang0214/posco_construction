@@ -278,6 +278,23 @@ def test_metadata_only_rematch_preserves_ids_ai_coverage_and_decision(tmp_path):
     assert store.get_project(project_id)["kcs_revision"] == "revision-b"
 
 
+def test_rematch_matched_count_excludes_reviewable_clauses_without_candidates(tmp_path):
+    store = Store(tmp_path / "matched-count.sqlite3")
+    _create_project(store, tmp_path)
+    run, prepared = _queue_and_claim(store)
+    results = _results(prepared)
+    next(item for item in results if item["id"] == "reviewed")["candidates"] = []
+
+    completed = store.apply_kcs_rematch(
+        run["id"],
+        prepared["expected_state_sha256"],
+        results,
+        {"mode": "test"},
+    )
+
+    assert completed["matched_count"] == 0
+
+
 def test_material_change_preserves_decision_but_invalidates_evidence_and_selection(tmp_path):
     store = Store(tmp_path / "material.sqlite3")
     project_id = _create_project(store, tmp_path)

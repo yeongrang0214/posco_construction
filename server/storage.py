@@ -2370,6 +2370,7 @@ class Store:
 
             matched_count = sum(
                 source_clauses[clause_id]["source_type"] in {"paragraph", "table"}
+                and bool(results_by_clause[clause_id])
                 for clause_id in results_by_clause
             )
             connection.execute(
