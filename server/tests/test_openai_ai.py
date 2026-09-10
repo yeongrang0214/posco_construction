@@ -10,6 +10,7 @@ import server.openai_ai as openai_ai_module
 from server.matcher import (
     _candidate_rows,
     _rank_matches,
+    _rank_without_embeddings,
     _rerank_from_scores,
     load_kcs_sections,
     match_clauses,
@@ -1278,3 +1279,23 @@ def test_candidate_rows_remove_duplicate_versions_of_the_same_kcs_clause():
     candidates = _candidate_rows(clause, "공작도를 작성한다.", ranked)
 
     assert len(candidates) == 1
+
+
+def test_scope_bonus_does_not_publish_a_low_relevance_candidate():
+    clause = {"id": str(uuid.uuid4())}
+    section = {
+        "code": "KCS 41 31 15",
+        "document_name": "건축물 강구조공사",
+        "version": "2026",
+        "update_date": "2026-08-01",
+        "clause": "3.2.1",
+        "title": "공작도",
+        "content": "공작도를 작성한다.",
+        "_equivalent_scope": True,
+    }
+
+    ranked = _rank_without_embeddings([(section, 0.04)])
+    candidates = _candidate_rows(clause, "관련 없는 원문", ranked)
+
+    assert ranked[0][1] > ranked[0][0]["_candidate_relevance_score"]
+    assert candidates == []

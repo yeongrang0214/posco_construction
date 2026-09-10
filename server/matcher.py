@@ -983,10 +983,11 @@ def _final_rank_score(
 def _rank_without_embeddings(
     ranked: list[tuple[dict[str, Any], float]],
 ) -> list[tuple[dict[str, Any], float, float | None]]:
-    calibrated = [
-        (section, _final_rank_score(section, score, embeddings_used=False), None)
-        for section, score in ranked
-    ]
+    calibrated = []
+    for section, score in ranked:
+        marked = dict(section)
+        marked["_candidate_relevance_score"] = score
+        calibrated.append((marked, _final_rank_score(marked, score, embeddings_used=False), None))
     calibrated.sort(key=lambda item: (-item[1], _section_key(item[0])))
     return calibrated
 
@@ -1008,8 +1009,10 @@ def _rerank_from_scores(
             effective_score = combined_score
         else:
             effective_score = local_score
-        final_score = _final_rank_score(section, effective_score, embeddings_used=True)
-        enriched.append((section, final_score, semantic_score))
+        marked = dict(section)
+        marked["_candidate_relevance_score"] = effective_score
+        final_score = _final_rank_score(marked, effective_score, embeddings_used=True)
+        enriched.append((marked, final_score, semantic_score))
     enriched.sort(
         key=lambda item: (
             -item[1],
@@ -1066,7 +1069,8 @@ def _candidate_rows(
         )
         if (title_only or non_substantive_fragment) and not explicit_reference:
             continue
-        if score < 0.25 and not explicit_reference:
+        relevance_score = float(section.get("_candidate_relevance_score", score))
+        if relevance_score < 0.25 and not explicit_reference:
             continue
         clause_key = normalize_key(section.get("clause"))
         if not clause_key:
