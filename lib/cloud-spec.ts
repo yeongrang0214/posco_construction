@@ -664,6 +664,7 @@ export async function rematchCloudProject(projectId: string) {
     started_at: finishedAt,
     finished_at: finishedAt,
     matcher_signature: {
+      matcher: 'hybrid-kcs-v5-calibrated-warnings',
       domain_equivalents: true,
       adjacent_context: true,
       scope_guard: true,

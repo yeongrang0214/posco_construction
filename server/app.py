@@ -33,6 +33,7 @@ from .documents import (
 )
 from .kcs_sync import kcs_read_lock, sync_kcs
 from .matcher import (
+    CURRENT_MATCHER_VERSION,
     activate_matcher_revision,
     build_scope_sample,
     clear_matcher_caches,
@@ -472,7 +473,7 @@ def _execute_kcs_rematch(run_id: str) -> None:
     try:
         worker_client = OpenAIClient.from_settings(settings)
         matcher_signature = {
-            "matcher": "hybrid-kcs-v4-adjacent-scope",
+            "matcher": CURRENT_MATCHER_VERSION,
             "requested_mode": "strict_openai_embeddings",
             "require_embeddings": True,
             "embedding_model": worker_client.embedding_model,
@@ -826,6 +827,7 @@ def health():
         "openai_available": ai_client.available,
         "doc_upload_available": bool(doc_conversion_engine),
         "doc_conversion_engine": doc_conversion_engine,
+        "matcher_version": CURRENT_MATCHER_VERSION,
     }
 
 

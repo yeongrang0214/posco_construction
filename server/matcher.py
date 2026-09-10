@@ -22,6 +22,9 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5-calibrated-warnings"
+
+
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
     2: (("21",), "KCS 21"),
     3: (("4134",), "KCS 41 34"),

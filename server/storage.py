@@ -15,6 +15,7 @@ from threading import RLock
 from typing import Any, Iterator
 
 from .kcs_impact import plan_clause_impact
+from .matcher import CURRENT_MATCHER_VERSION
 from .openai_ai import coverage_source_segments
 
 
@@ -1583,7 +1584,7 @@ class Store:
                 if (
                     existing["status"] == "completed"
                     and matcher_name.startswith("hybrid-kcs-v")
-                    and matcher_name != "hybrid-kcs-v4-adjacent-scope"
+                    and matcher_name != CURRENT_MATCHER_VERSION
                 ):
                     connection.execute(
                         "DELETE FROM kcs_clause_impacts WHERE run_id = ?",
