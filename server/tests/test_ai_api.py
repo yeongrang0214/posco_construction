@@ -213,6 +213,28 @@ def test_coverage_api_rejects_source_changed_while_gpt_is_running(tmp_path, monk
     assert saved_count == 0
 
 
+def test_coverage_checks_split_first_line_and_preserves_material_context(tmp_path, monkeypatch):
+    store = Store(tmp_path / "split-source.sqlite3")
+    project_id, clause_id, _ = _seed(store, tmp_path)
+    with store.connect() as connection:
+        connection.execute("UPDATE clauses SET title = ?, content = ?, match_context = ? WHERE id = ?",
+                           ("내화 모르타르는 KS L 3202 규정에", "적합한 것을 사용한다.", "2.3 내화벽돌", clause_id))
+    class CompleteSourceAI:
+        available = True
+        def analyze_coverage(self, posco_text, candidates, posco_context=""):
+            assert posco_text == "내화 모르타르는 KS L 3202 규정에 적합한 것을 사용한다."
+            assert "2.3 내화벽돌" in posco_context
+            return CoverageAnalysis(coverage_status="posco_specific", confidence=.95,
+                requirements=({"requirement": posco_text, "source_segment_ids": ["S1"], "status": "not_covered", "evidence_candidate_ids": [], "evidence": "시험 후보에 재료 규정이 없음"},),
+                residual_content=posco_text, rationale="재료 규정이 다릅니다.", model="gpt-test")
+    monkeypatch.setattr(app_module, "store", store)
+    monkeypatch.setattr(app_module, "ai_client", CompleteSourceAI())
+    with TestClient(app_module.app) as client:
+        result = client.post(f"/api/projects/{project_id}/clauses/{clause_id}/coverage-analysis")
+    assert result.status_code == 200, result.text
+    assert "KS L 3202" in result.json()["analysis"]["requirements"][0]["requirement"]
+
+
 def test_candidate_restore_api_cannot_remove_unsafe_coverage_gate(tmp_path, monkeypatch):
     store = Store(tmp_path / "unsafe-restore.sqlite3")
     project_id, clause_id, candidate_id = _seed(store, tmp_path)

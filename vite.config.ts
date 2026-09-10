@@ -18,6 +18,7 @@ const ignoredWatchPaths = [
   '**/dist/**',
   '**/server/vendor/**',
   '**/test-temp/**',
+  '**/tmp/**',
 ];
 
 const localBindingConfig = {
@@ -43,6 +44,10 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async () => {
+  const localPreviewApi = process.env.SPEC_MANAGER_PREVIEW_API_ORIGIN;
+  if (localPreviewApi && !/^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(localPreviewApi)) {
+    throw new Error('Preview API must be a local loopback server.');
+  }
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= 'false';
@@ -55,6 +60,9 @@ export default defineConfig(async () => {
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
     server: {
+      ...(localPreviewApi ? { proxy: {
+        '/relay': { target: localPreviewApi, rewrite: (path: string) => path.replace(/^\/relay/, '') },
+      } } : {}),
       watch: {
         ignored: ignoredWatchPaths,
         ...(isCodexSeatbeltSandbox ? { useFsEvents: false, usePolling: true } : {}),

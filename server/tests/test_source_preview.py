@@ -97,3 +97,32 @@ def test_grade_without_table_geometry_never_invents_row_box():
     row = {**clause("a", 1, "1종 | SM275A | 두께200 mm 이하"), "source_type": "table"}
     result = preview.map_clauses({"pages": [page("SM275A 다른 내용")]}, [row])
     assert result["items"][0]["status"] == "unmapped"
+
+
+def test_multiline_cells_are_read_by_column_not_physical_line():
+    # Physical text is A C B D; the Word table row is AB | CD.
+    chars = [["a", 1, 1, 2, 2], ["c", 11, 1, 12, 2],
+             ["b", 1, 11, 2, 12], ["d", 11, 11, 12, 12]]
+    rows = preview._cell_order_rows((0, 0, 20, 20), [(0, 0, 10, 20), (10, 0, 20, 20)], chars)
+    assert [r["text"] for r in rows] == ["abcd"]
+    p = {**page(""), "chars": chars, "table_rows": rows}
+    result = preview.map_clauses({"pages": [p]}, [clause("a", 1, "AB | CD")])
+    assert result["items"][0]["status"] == "table_row"
+    assert preview.map_clauses({"pages": [p]}, [clause("a", 1, "AB | CE")])["mapped_count"] == 0
+
+
+def test_floating_table_above_anchor_still_maps_without_reusing_row():
+    p = page("내화벽돌2개 현장품질검사")
+    p["table_rows"] = [{"text": "내화벽돌2개", "start": 0, "end": 6,
+                        "left": 0, "right": 500, "top": 80, "bottom": 95}]
+    result = preview.map_clauses({"pages": [p]}, [clause("h", 1, "현장품질검사"),
+        clause("a", 2, '내화벽돌 | " | 2개 | "'), clause("b", 3, '내화벽돌 | " | 2개 | "')])
+    assert [r["status"] for r in result["items"]] == ["exact", "table_row", "unmapped"]
+
+
+def test_ambiguous_floating_rows_are_not_guessed():
+    p = page("내화벽돌2개 내화벽돌2개 현장품질검사")
+    p["table_rows"] = [{"text": "내화벽돌2개", "start": start, "end": start + 6,
+                        "left": 0, "right": 500, "top": 80 + start, "bottom": 85 + start} for start in (0, 6)]
+    result = preview.map_clauses({"pages": [p]}, [clause("h", 1, "현장품질검사"), clause("a", 2, "내화벽돌 | 2개")])
+    assert result["items"][1]["status"] == "unmapped"

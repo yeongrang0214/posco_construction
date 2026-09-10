@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import text_analysis
-from .relevance import apply_verdicts, clearly_unrelated, own_requirement, query_text, contextual_requirement
+from .relevance import apply_verdicts, clearly_unrelated, own_requirement, query_text, contextual_requirement, masonry_material_conflict
 from .table_evidence import table_candidates
 from .kcs_sync import (
     catalog_revision,
@@ -24,7 +24,7 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
-CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.2-requirement-validation"
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.4-material-context"
 
 
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
@@ -1065,6 +1065,11 @@ def _candidate_rows(
     ordered = [*reserved, *(item for item in ranked if _section_key(item[0]) not in reserved_keys)]
 
     for section, score, semantic_score in ordered:
+        if masonry_material_conflict(
+            str(clause.get("match_context") or ""),
+            f"{section.get('document_name', '')} > {section.get('title', '')}",
+        ):
+            continue
         if clearly_unrelated(own_requirement(clause) or source_text, section.get("content", "")):
             continue
         explicit_reference = bool(section.get("_explicit_reference"))
@@ -1225,7 +1230,10 @@ def match_clauses(
     if active and callable(verifier) and getattr(ai_client, "available", False) and getattr(ai_client, "embeddings_available", True):
         try:
             verified = verifier([
-                (contextual_requirement(clause), [row["content"] for row in rows])
+                (contextual_requirement(clause), [
+                    f"[KCS 상위 문맥] {row['document_name']} > {row['title']}\n[KCS 본문] {row['content']}"
+                    for row in rows
+                ])
                 for clause, rows in active
             ])
         except OpenAIAPIError:

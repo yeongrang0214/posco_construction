@@ -47,11 +47,70 @@ def contextual_requirement(clause: dict[str, Any]) -> str:
     own = own_requirement(clause)
     if clause.get("source_type") == "table" and clause.get("match_context"):
         return f"[원문 표 제목·열 문맥] {clause['match_context']}\n[현재 표 행] {own}"
+    if clause.get("match_context"):
+        return f"[원문 상위 문맥] {clause['match_context']}\n[현재 요구사항] {own}"
     return own
+
+
+def verification_body(text: str) -> str:
+    """Context disambiguates a material, but cannot stand in for body evidence."""
+    for prefix, marker in (
+        ("[원문 표 제목·열 문맥]", "\n[현재 표 행] "),
+        ("[원문 상위 문맥]", "\n[현재 요구사항] "),
+        ("[KCS 상위 문맥]", "\n[KCS 본문] "),
+    ):
+        if text.startswith(prefix) and marker in text:
+            return text.partition(marker)[2]
+    return text
+
+
+def masonry_material_conflict(source_context: str, target_context: str) -> bool:
+    """Reject exclusive, different masonry units; leave generic/mixed scopes eligible.
+
+    Use section hierarchy, not incidental cross-references in the compared body.
+    This is a retrieval guard, never a deletion decision.
+    """
+    def units(text: str) -> set[str]:
+        text = re.sub(r"\s+", "", text).lower()
+        found = set()
+        for unit, pattern in (
+            ("refractory_brick", r"내화벽돌"),
+            ("clay_brick", r"점토벽돌|붉은벽돌"),
+            ("concrete_brick", r"콘크리트벽돌|시멘트벽돌"),
+            ("form_block", r"거푸집블록"),
+            ("concrete_block", r"콘크리트블록"),
+            ("alc", r"alc블록|alc패널|고온고압증기양생경량기포콘크리트"),
+        ):
+            if re.search(pattern, text):
+                found.add(unit)
+        if "벽돌" in text and not any(unit.endswith("_brick") for unit in found):
+            found.add("brick")
+        if "블록" in text and not found.intersection({"form_block", "concrete_block", "alc"}):
+            found.add("block")
+        return found
+    source_units, target_units = units(source_context), units(target_context)
+    if len(source_units) != 1 or len(target_units) != 1 or source_units == target_units:
+        return False
+    source, target = next(iter(source_units)), next(iter(target_units))
+    # Generic brick/block sections can cover a subtype of the same family.
+    brick_family = {"brick", "refractory_brick", "clay_brick", "concrete_brick"}
+    block_family = {"block", "form_block", "concrete_block", "alc"}
+    for generic, family in (("brick", brick_family), ("block", block_family)):
+        if generic in {source, target} and {source, target}.issubset(family):
+            return False
+    return True
 
 
 def commercial_only(text: str) -> bool:
     return bool(COMMERCIAL.search(text)) and not bool(TECHNICAL.search(text))
+
+
+def named_mortar_mismatch(source: str, target: str) -> bool:
+    """Different explicit material names require review, not assumed equivalence."""
+    def names(text: str) -> set[str]:
+        return set(re.findall(r"(내화|단열)\s*(?:몰탈|모르타르|모르터)", text))
+    source_names, target_names = names(source), names(target)
+    return len(source_names) == len(target_names) == 1 and source_names.isdisjoint(target_names)
 
 
 def clearly_unrelated(source: str, target: str) -> bool:
@@ -61,6 +120,8 @@ def clearly_unrelated(source: str, target: str) -> bool:
 
 
 def evidence_present(quote: str, text: str) -> bool:
+    # Remove only our own leading field label; never repair invented/abridged quotes.
+    quote = re.sub(r"^\s*\[(?:현재 요구사항|현재 표 행|KCS 본문)\]\s*", "", str(quote))
     normalize = lambda value: re.sub(r"\s+", "", str(value)).casefold()
     needle = normalize(quote)
     return len(needle) >= 4 and needle in normalize(text)

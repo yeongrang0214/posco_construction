@@ -17,6 +17,7 @@ from typing import Any, Iterator
 from .kcs_impact import plan_clause_impact
 from .matcher import CURRENT_MATCHER_VERSION
 from .openai_ai import coverage_source_segments
+from .relevance import own_requirement
 
 
 KCS_DELETE_REASON = "fully_covered_by_kcs"
@@ -1114,7 +1115,7 @@ class Store:
                 try:
                     requirements = json.loads(row["requirements_json"] or "[]")
                     source_segments = coverage_source_segments(
-                        row["content"] or row["title"]
+                        own_requirement(dict(row))
                     )
                     source_text_by_id = dict(source_segments)
                     expected_ids = list(source_text_by_id)
@@ -1173,7 +1174,7 @@ class Store:
                             "evidence": "원문 구간 완전성 검증 후 재분석이 필요합니다.",
                         }
                         for source_id, source_text in coverage_source_segments(
-                            row["content"] or row["title"]
+                            own_requirement(dict(row))
                         )
                     ]
                 except ValueError:
@@ -5633,6 +5634,7 @@ class Store:
             "posco_label": clause["label"],
             "posco_title": clause["title"],
             "posco_content": clause["content"],
+            "match_context": clause.get("match_context", ""),
             "candidates": clause["candidates"][:3],
             "coverage_analysis": clause.get("coverage_analysis"),
         }
@@ -5719,10 +5721,7 @@ class Store:
                 return None
             if clause["source_type"] == "heading":
                 raise ValueError("목차와 구조 제목은 전체 포괄 분석 대상이 아닙니다.")
-            current_posco_text = (
-                str(clause["content"] or "").strip()
-                or str(clause["title"] or "").strip()
-            )
+            current_posco_text = own_requirement(dict(clause))
             source_segments = coverage_source_segments(current_posco_text)
             if expected_posco_text is not None and source_segments != coverage_source_segments(
                 expected_posco_text

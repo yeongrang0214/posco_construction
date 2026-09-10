@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .backups import BackupError, BackupManager, BackupNotFoundError
 from .config import get_settings
+from .relevance import own_requirement
 from .documents import (
     build_audit_xlsx,
     build_quality_evaluation_xlsx,
@@ -1595,15 +1596,15 @@ async def analyze_clause_coverage(
             detail="GPT 전체포괄 분석을 사용하려면 프로젝트 .env에 OPENAI_API_KEY를 설정하세요.",
         )
 
-    posco_text = (
-        str(context.get("posco_content") or "").strip()
-        or str(context.get("posco_title") or "").strip()
-    )
+    posco_text = own_requirement({
+        "title": context.get("posco_title"), "content": context.get("posco_content"),
+    })
     posco_context = " ".join(
         part
         for part in (
             str(context.get("posco_label") or "").strip(),
             str(context.get("posco_title") or "").strip(),
+            str(context.get("match_context") or "").strip(),
         )
         if part
     )

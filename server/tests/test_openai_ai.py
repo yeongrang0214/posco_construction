@@ -18,6 +18,65 @@ from server.matcher import (
 from server.openai_ai import OpenAIAPIError, OpenAIClient, coverage_source_segments
 
 
+@pytest.mark.parametrize("target,status", [
+    ("단열 모르타르는 덩어리를 풀어 물반죽하여 사용한다.", "uncertain"),
+    ("내화 모르터는 덩어리를 풀어 물반죽하여 사용한다.", "fully_covered"),
+])
+def test_different_named_mortar_cannot_be_marked_fully_covered(target, status):
+    source = "내화몰탈은 덩어리를 풀어 물반죽하여 사용한다."
+    result = {"coverage_status": "fully_covered", "confidence": .98,
+              "requirements": [{"source_segment_id": "S1", "status": "covered", "evidence_candidate_ids": ["C1"], "evidence": target}],
+              "residual_content": "", "rationale": "같은 작업 순서"}
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"output_text": json.dumps(result, ensure_ascii=False)})
+    )))
+    analysis = client.analyze_coverage(source, [("C1", target)])
+    assert analysis.coverage_status == status
+    if status == "uncertain":
+        assert analysis.requirements[0]["status"] == "uncertain"
+        assert analysis.residual_content == source
+
+
+@pytest.mark.parametrize("keys", [{}, {"S1": {}, "S2": {}}])
+def test_keyed_coverage_rejects_missing_or_unknown_source(keys):
+    payload = {"confidence": .9, "requirements_by_source": keys, "residual_content": "", "rationale": "검증"}
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"output_text": json.dumps(payload)})
+    )))
+    with pytest.raises(OpenAIAPIError):
+        client.analyze_coverage("시험을 실시한다.", [("C1", "시험을 실시한다.")])
+
+
+def test_keyed_coverage_retains_remaining_source_when_model_omits_residual():
+    source = "견본을 제출하고 담당자의 승인을 받는다."
+    payload = {"confidence": .9, "requirements_by_source": {"S1": {
+        "status": "not_covered", "evidence_candidate_ids": ["C1"], "evidence": "견본 제출만 대응"}},
+        "residual_content": "", "rationale": "일부만 대응"}
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"output_text": json.dumps(payload)})
+    )))
+    result = client.analyze_coverage(source, [("C1", "견본을 제출한다.")])
+    assert result.coverage_status == "partially_covered"
+    assert result.residual_content == source
+
+
+def test_keyed_coverage_does_not_discard_contradictory_residual():
+    payload = {"confidence": .9, "requirements_by_source": {"S1": {
+        "status": "covered", "evidence_candidate_ids": ["C1"], "evidence": "시험"}},
+        "residual_content": "다른 의무가 남음", "rationale": "대응"}
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"output_text": json.dumps(payload)})
+    )))
+    with pytest.raises(OpenAIAPIError, match="모순"):
+        client.analyze_coverage("시험을 실시한다.", [("C1", "시험을 실시한다.")])
+
+
+def test_duplicate_json_keys_are_rejected_not_silently_overwritten():
+    with pytest.raises(ValueError, match="duplicate"):
+        json.loads('{"S1": {"status":"uncertain"}, "S1": {"status":"covered"}}',
+                   object_pairs_hook=openai_ai_module._unique_json_object)
+
+
 def test_client_requires_key_without_making_request():
     called = False
 
@@ -175,10 +234,11 @@ def test_structured_combined_coverage_analysis_requires_evidence_for_every_requi
     assert analysis.residual_content == "강재 표면의 염분 농도를 측정하여야 한다."
     assert captured["text"]["format"]["type"] == "json_schema"
     assert captured["text"]["format"]["strict"] is True
-    evidence_schema = captured["text"]["format"]["schema"]["properties"]["requirements"]["items"]["properties"]["evidence_candidate_ids"]["items"]
+    source_schema = captured["text"]["format"]["schema"]["properties"]["requirements_by_source"]
+    evidence_schema = source_schema["properties"]["S1"]["properties"]["evidence_candidate_ids"]["items"]
     assert evidence_schema["enum"] == ["C1", "C2"]
-    source_schema = captured["text"]["format"]["schema"]["properties"]["requirements"]["items"]["properties"]["source_segment_id"]
-    assert source_schema["enum"] == ["S1", "S2"]
+    assert source_schema["required"] == ["S1", "S2"]
+    assert source_schema["additionalProperties"] is False
 
 
 def test_single_compound_requirement_preserves_partial_overlap_evidence():
@@ -563,10 +623,9 @@ def _dynamic_coverage_response(
     conflict_source_id: str | None = None,
     confidence: float = 0.92,
 ) -> httpx.Response:
-    requirement_schema = payload["text"]["format"]["schema"]["properties"][
-        "requirements"
-    ]["items"]["properties"]
-    source_ids = requirement_schema["source_segment_id"]["enum"]
+    source_schema = payload["text"]["format"]["schema"]["properties"]["requirements_by_source"]
+    source_ids = source_schema["required"]
+    requirement_schema = source_schema["properties"][source_ids[0]]["properties"]
     candidate_ids = requirement_schema["evidence_candidate_ids"]["items"]["enum"]
     requirements = []
     for source_id in source_ids:
@@ -584,11 +643,8 @@ def _dynamic_coverage_response(
         json={
             "output_text": json.dumps(
                 {
-                    "coverage_status": (
-                        "conflict" if conflict_source_id else "fully_covered"
-                    ),
                     "confidence": confidence,
-                    "requirements": requirements,
+                    "requirements_by_source": {r.pop("source_segment_id"): r for r in requirements},
                     "residual_content": "",
                     "rationale": "분할된 입력의 요구사항을 모두 확인했다.",
                 },
@@ -679,8 +735,8 @@ def test_combined_coverage_conservatively_merges_conflict_from_one_call():
         call_count += 1
         payload = json.loads(request.content)
         source_ids = payload["text"]["format"]["schema"]["properties"][
-            "requirements"
-        ]["items"]["properties"]["source_segment_id"]["enum"]
+            "requirements_by_source"
+        ]["required"]
         if call_count == 2:
             conflict_source_id = source_ids[0]
         return _dynamic_coverage_response(

@@ -718,7 +718,7 @@ def test_combined_coverage_is_frozen_in_decision_history_and_audit(tmp_path):
     )
     assert saved is not None
     assert saved["coverage_analysis"]["requirements"][0]["requirement"].startswith(
-        "강재 표면의 이물질"
+        "표면처리 강재 표면의 이물질"
     )
     store.update_decision(
         project_id,
@@ -877,7 +877,7 @@ def test_coverage_save_rejects_source_changed_during_gpt_analysis(tmp_path):
             [candidate_id],
             _fully_covered_snapshot(candidate_id),
             "gpt-test",
-            expected_posco_text="강재 표면의 이물질을 제거하여야 한다.",
+            expected_posco_text="표면처리 강재 표면의 이물질을 제거하여야 한다.",
         )
 
     with store.connect() as connection:
@@ -907,7 +907,7 @@ def test_coverage_save_rejects_candidate_content_changed_during_gpt_analysis(tmp
             [candidate_id],
             _fully_covered_snapshot(candidate_id),
             "gpt-test",
-            expected_posco_text="강재 표면의 이물질을 제거하여야 한다.",
+            expected_posco_text="표면처리 강재 표면의 이물질을 제거하여야 한다.",
             expected_candidate_texts=[original_candidate_text],
         )
 
@@ -942,3 +942,22 @@ def test_audit_tolerates_legacy_or_malformed_coverage_snapshot(tmp_path, raw_sna
     assert len(rows) == 1
     assert rows[0]["coverage_status"] is None
     assert rows[0]["coverage_requirements"] == ""
+
+
+def test_legacy_tail_only_coverage_is_invalidated_without_changing_manual_choice(tmp_path):
+    store, project_id, clause_id, candidate_id = _project_with_candidate(tmp_path)
+    saved = store.save_coverage_analysis(project_id, clause_id, [candidate_id],
+                                         _fully_covered_snapshot(candidate_id), "gpt-old")
+    assert saved["coverage_analysis"]["deletion_safe"]
+    store.update_decision(project_id, clause_id, "keep", "", "사용자가 남긴 의견", None,
+                          decision_reason="posco_specific")
+    with store.connect() as connection:
+        legacy = saved["coverage_analysis"]["requirements"]
+        legacy[0]["requirement"] = "강재 표면의 이물질을 제거하여야 한다."
+        connection.execute("UPDATE clause_coverage_analysis SET requirements_json = ? WHERE clause_id = ?",
+                           (json.dumps(legacy, ensure_ascii=False), clause_id))
+    reopened = Store(tmp_path / "ai-storage.sqlite3").get_clause(project_id, clause_id)
+    assert reopened["coverage_analysis"]["coverage_status"] == "uncertain"
+    assert not reopened["coverage_analysis"]["deletion_safe"]
+    assert reopened["decision"] == "keep"
+    assert reopened["review_note"] == "사용자가 남긴 의견"

@@ -16,7 +16,7 @@ from pathlib import Path
 import pdfplumber
 from .table_evidence import grades
 
-PREVIEW_VERSION = "pdf-v2-table-rows"
+PREVIEW_VERSION = "pdf-v3-cell-order"
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="source-pdf")
 _lock = threading.Lock()
 _jobs: dict[str, Future] = {}
@@ -81,7 +81,15 @@ def extract_index(path: Path) -> dict:
                         chars.append([letter, round(char["x0"], 2), round(char["top"], 2),
                                       round(char["x1"], 2), round(char["bottom"], 2)])
             material_rows = []
-            for table in page.find_tables():
+            tables = page.find_tables()
+            table_rows = []
+            for table in tables:
+                # Word can draw nested text boxes that look like separate tables.
+                if not any(other is not table and other.bbox != table.bbox
+                           and other.bbox[0] <= table.bbox[0] and other.bbox[1] <= table.bbox[1]
+                           and other.bbox[2] >= table.bbox[2] and other.bbox[3] >= table.bbox[3]
+                           for other in tables):
+                    table_rows.extend(_cell_order_rows(table.bbox, table.cells, chars))
                 for cell in table.cells:
                     x0, top, x1, bottom = cell
                     # Match an entire grade cell; table geometry supplies the row
@@ -92,9 +100,41 @@ def extract_index(path: Path) -> dict:
                     if len(identifiers) == 1 and value == normalized(next(iter(identifiers))):
                         material_rows.append({"grade": value, "left": table.bbox[0], "top": top,
                                               "right": table.bbox[2], "bottom": bottom})
-            pages.append({"page": page.page_number, "width": float(page.width), "height": float(page.height), "chars": chars, "material_rows": material_rows})
+            pages.append({"page": page.page_number, "width": float(page.width), "height": float(page.height), "chars": chars, "material_rows": material_rows, "table_rows": table_rows})
             page.close()
     return {"pages": pages}
+
+
+def _cell_order_rows(bbox: tuple, cells: list, chars: list) -> list[dict]:
+    """Read a PDF row down each cell, not across interleaved physical lines.
+
+    Candidate row bands come from real cell borders (including merged cells).
+    Never split through a glyph or infer a row from a short matching keyword.
+    """
+    left, top, right, bottom = bbox
+    inside = [(i, c) for i, c in enumerate(chars)
+              if left <= (c[1] + c[3]) / 2 <= right and top <= (c[2] + c[4]) / 2 <= bottom]
+    boundaries = sorted({round(cell[i], 1) for cell in cells for i in (0, 2)})
+    boundaries = [x for x in boundaries if not any(c[1] + .3 < x < c[3] - .3 for _, c in inside)]
+    columns = []
+    for x in boundaries:
+        if not columns or x - columns[-1] > 3:
+            columns.append(x)
+    rows = []
+    for row_top, row_bottom in sorted({(c[1], c[3]) for c in cells}):
+        row_chars = [(i, c) for i, c in inside if row_top <= (c[2] + c[4]) / 2 < row_bottom]
+        values = ["".join(c[0] for _, c in row_chars if x0 <= (c[1] + c[3]) / 2 < x1)
+                  for x0, x1 in zip(columns, columns[1:])]
+        if sum(bool(value) for value in values) < 2:
+            continue
+        # Reject geometry which lost any characters at its outer borders.
+        value = "".join(values)
+        if len(value) < 4 or len(value) != len(row_chars):
+            continue
+        rows.append({"text": value, "start": min(i for i, _ in row_chars),
+                     "end": max(i for i, _ in row_chars) + 1, "left": left, "right": right,
+                     "top": row_top, "bottom": row_bottom})
+    return rows
 
 
 def request_preview(source: Path, cache_dir: Path) -> tuple[str, Path]:
@@ -125,14 +165,37 @@ def request_preview(source: Path, cache_dir: Path) -> tuple[str, Path]:
 
 def map_clauses(index: dict, clauses: list[dict]) -> dict:
     characters = []
+    table_rows = []
     for page in index["pages"]:
+        offset = len(characters)
+        table_rows.extend({**r, "start": r["start"] + offset, "end": r["end"] + offset,
+                           "page": page["page"]} for r in page.get("table_rows", []))
         characters.extend((page["page"], *char) for char in page["chars"])
     text = "".join(char[1] for char in characters)
     cursor = 0
+    used_table_spans = []
     items = []
     for clause in sorted(clauses, key=lambda row: row["source_order"]):
         title = str(clause.get("title") or "").removesuffix("…")
         content = str(clause.get("content") or "")
+        if "|" in content:
+            # Match the complete Word table row; no fuzzy/partial-cell highlights.
+            available = [r for r in table_rows if r["text"] == normalized(content)
+                         and not any(r["start"] < end and r["end"] > start for start, end in used_table_spans)]
+            rows = [r for r in available if r["start"] >= cursor]
+            if not rows and cursor:
+                # A floating Word table may render above its anchor paragraph.
+                # Permit only an unambiguous unused row on that same PDF page.
+                earlier = [r for r in available if r["page"] == characters[cursor - 1][0]]
+                if len({r["start"] for r in earlier}) == 1:
+                    rows = earlier
+            if rows:
+                row = min(rows, key=lambda r: (r["start"], r["bottom"] - r["top"]))
+                items.append({"id": clause["id"], "status": "table_row", "boxes": [
+                    {k: row[k] for k in ("page", "left", "top", "right", "bottom")} ]})
+                used_table_spans.append((row["start"], row["end"]))
+                cursor = max(cursor, row["end"])
+                continue
         identifiers = grades(content) if clause.get("source_type") == "table" else set()
         if len(identifiers) == 1:
             target = normalized(next(iter(identifiers)))

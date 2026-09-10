@@ -4,7 +4,7 @@ import uuid
 import httpx
 import pytest
 
-from server.relevance import apply_verdicts, clearly_unrelated, query_text
+from server.relevance import apply_verdicts, clearly_unrelated, query_text, contextual_requirement, own_requirement, masonry_material_conflict, evidence_present
 from server.matcher import _candidate_rows
 from server.openai_ai import OpenAIClient
 
@@ -97,3 +97,80 @@ def test_low_search_score_requires_verified_body_before_display():
     rows = apply_verdicts([candidate], [{"relation": "partial", "target_quote": "강재는 유해한 결함이 없어야 한다."}])
     assert rows[0]["score"] == .2
     assert "_requires_verification" not in rows[0]
+
+
+def test_split_first_line_and_material_heading_are_in_verification_input():
+    row = clause("감독원의 승인을 받아 사용한다.", title="제품은 미리 견본품을 제출하여",
+                 match_context="조적공사 > 내화벽돌")
+    assert own_requirement(row) == "제품은 미리 견본품을 제출하여 감독원의 승인을 받아 사용한다."
+    assert "내화벽돌" in contextual_requirement(row)
+    assert own_requirement(row) in contextual_requirement(row)
+    assert own_requirement(clause("제품은 미리 견본품을 제출한다.", title="제품은 미리…")) == "제품은 미리 견본품을 제출한다."
+
+
+@pytest.mark.parametrize("context_side", ["source", "target"])
+def test_heading_only_evidence_cannot_pass_semantic_verification(context_side):
+    source = contextual_requirement(clause("제품 견본을 제출하여 승인을 받는다.", match_context="내화벽돌 시공 기준"))
+    target = "[KCS 상위 문맥] 콘크리트블록 시공 기준\n[KCS 본문] 제품 견본을 제출하여 승인을 받는다."
+    def handler(request):
+        row = {"id": "0", "relation": "related", "reason": "제목만 인용하는 잘못된 응답",
+               "source_quote": "내화벽돌 시공 기준" if context_side == "source" else "제품 견본을 제출하여 승인을 받는다.",
+               "target_quote": "콘크리트블록 시공 기준" if context_side == "target" else "제품 견본을 제출하여 승인을 받는다."}
+        return httpx.Response(200, json={"output_text": json.dumps({"results": [row]}, ensure_ascii=False)})
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.verify_candidate_groups([(source, [target])])[0][0]["relation"] == "uncertain"
+
+
+@pytest.mark.parametrize("source,target,conflict", [
+    ("2.3 내화벽돌", "콘크리트 블록공사 > 2.1 콘크리트 블록", True),
+    ("내화벽돌", "벽돌공사 > 재료 반입 일반", False),
+    ("점토 벽돌", "붉은벽돌쌓기", False),
+    ("콘크리트 벽돌", "콘크리트 블록", True),
+    ("내화벽돌 및 콘크리트 벽돌", "콘크리트 벽돌", False),
+    ("모르타르", "내화벽돌공사", False),
+    ("내화벽돌", "블록공사 > 블록의 치수", True),
+    ("내화벽돌", "단순조적블록공사 > 인방블록쌓기", True),
+    ("벽돌", "블록공사", True),
+    ("블록", "ALC블록공사", False),
+    ("벽돌 및 블록", "내화벽돌", False),
+])
+def test_masonry_scope_gate(source, target, conflict):
+    assert masonry_material_conflict(source, target) is conflict
+
+
+def test_malformed_batch_does_not_cancel_remaining_verification():
+    calls = []
+    def handler(request):
+        calls.append(request)
+        pairs = json.loads(json.loads(request.content)["input"])
+        if len(calls) == 1:
+            return httpx.Response(200, json={"output_text": "invalid"})
+        rows = [{"id": p["id"], "relation": "related", "reason": "실제 본문 일치", "source_quote": p["source"], "target_quote": p["target"]} for p in pairs]
+        return httpx.Response(200, json={"output_text": json.dumps({"results": rows}, ensure_ascii=False)})
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = client.verify_candidate_groups([("강재를 검사한다.", [f"강재를 검사한다. {i}" for i in range(9)])])[0]
+    assert len(calls) == 2
+    assert all(r["relation"] == "uncertain" for r in result[:8])
+    assert result[8]["relation"] == "related"
+
+
+def test_evidence_accepts_only_known_field_label_not_invented_or_abridged_text():
+    body = "내화벽돌은 먼지 등을 청소하고 물축이기는 하지 않는다."
+    assert evidence_present("[현재 요구사항] " + body, body)
+    assert evidence_present("[KCS 본문] " + body, body)
+    assert not evidence_present("내화벽돌은 ... 물축이기는 하지 않는다.", body)
+    assert not evidence_present("[원문 상위 문맥] 내화벽돌", body)
+    assert not evidence_present("[현재 요구사항] 벽돌은 물축이기를 한다.", body)
+
+
+def test_verification_batches_never_mix_source_clauses():
+    calls = []
+    def handler(request):
+        pairs = json.loads(json.loads(request.content)["input"])
+        calls.append(pairs)
+        values = [{"id": p["id"], "relation": "unrelated", "reason": "별개 의무", "source_quote": "", "target_quote": ""} for p in pairs]
+        return httpx.Response(200, json={"output_text": json.dumps({"results": values}, ensure_ascii=False)})
+    client = OpenAIClient("test", http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.verify_candidate_groups([("줄눈 치수 의무", ["치수 기준", "품질 기준"]), ("제품 견본 제출 의무", ["승인 기준"])])
+    assert len(calls) == 2
+    assert all(len({p["source"] for p in batch}) == 1 for batch in calls)

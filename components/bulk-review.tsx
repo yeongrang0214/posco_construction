@@ -21,6 +21,7 @@ import {
 
 import { PdfSourceViewer as DocxSourceViewer } from '@/components/pdf-source-viewer';
 import { TableComparisonPanel } from '@/components/table-comparison';
+import { CoverageStatusPanel } from '@/components/coverage-status-panel';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -690,6 +691,7 @@ export function BulkReview({
                   />
 
                   <section className="min-h-0 overflow-auto rounded-xl border border-border bg-card p-3 shadow-sm" aria-label="KCS 후보 비교">
+                    {item.source_type !== 'heading' && <CoverageStatusPanel key={`${projectId}:${item.id}`} projectId={projectId} clauseId={item.id} refreshKey={refreshKey} onOpenDetail={() => onOpenDetail(item.id)} />}
                     <TableComparisonPanel projectId={projectId} clauseId={item.id} enabled={item.source_type === 'table'}
                       selectedId={item.selected_candidate_id} disabled={rowDecisionBusy || item.decision === 'delete' || reason === 'no_kcs_match'}
                       onSelect={(candidateId) => selectCandidate(item, candidateId)} fallback={<>
