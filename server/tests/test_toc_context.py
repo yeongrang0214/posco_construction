@@ -382,7 +382,7 @@ def test_matcher_only_matches_paragraphs_and_tables_with_context(tmp_path, monke
     matcher_module.match_clauses(clauses, tmp_path, ("4131",))
 
     assert len(ranked_source_texts) == 2
-    assert ranked_source_texts[0].startswith("2 재료 > 2.1 강재 검사 검사")
-    assert ranked_source_texts[1].startswith("3 시공 구분 구분")
+    assert ranked_source_texts[0] == "검사 강재를 검사한다. 2 재료 > 2.1 강재"
+    assert ranked_source_texts[1] == "구분 | 기준 3 시공"
     assert clauses[0]["candidates"] == []
     assert clauses[1]["candidates"] == []

@@ -191,11 +191,46 @@ def convert_legacy_doc(input_path: Path, output_path: Path) -> bytes:
 
 
 def _iter_blocks(document: DocumentObject) -> Iterable[Paragraph | Table]:
-    for child in document.element.body.iterchildren():
-        if child.tag == qn("w:p"):
-            yield Paragraph(child, document)
-        elif child.tag == qn("w:tbl"):
-            yield Table(child, document)
+    def walk(container):
+        for child in container:
+            if child.tag == qn("w:p"):
+                yield Paragraph(child, document)
+                # Legacy DOC conversion places floating tables in VML text boxes.
+                # Paragraph.text deliberately excludes their contents.
+                for textbox in child.iter(qn("w:txbxContent")):
+                    duplicate_fallback = any(
+                        a.tag.endswith("}Fallback") and any(
+                            sibling.tag.endswith("}Choice") and next(sibling.iter(qn("w:txbxContent")), None) is not None
+                            for sibling in a.getparent()
+                        ) for a in textbox.iterancestors()
+                    )
+                    if duplicate_fallback:
+                        continue
+                    if not any(a.tag == qn("w:txbxContent") for a in textbox.iterancestors()):
+                        yield from walk(textbox)
+            elif child.tag == qn("w:tbl"):
+                yield Table(child, document)
+            elif child.tag == qn("w:sdt"):
+                for content in child.findall(qn("w:sdtContent")):
+                    yield from walk(content)
+    yield from walk(document.element.body)
+
+
+def _table_cells(row) -> list[str]:
+    # Deduplicate only the same horizontally merged XML cell, not equal values
+    # from different columns. Vertical merges retain their inherited value.
+    cells, previous = [], None
+    for cell in row.cells:
+        if cell._tc is not previous:
+            cells.append(clean_text(cell.text))
+        previous = cell._tc
+    return cells
+
+
+def _is_table_header(cells: list[str]) -> bool:
+    labels = {"종별", "재질", "적용", "구분", "규격", "종류", "항목", "비고", "기호", "강종", "두께", "허용오차"}
+    normalized = [re.sub(r"\s+", "", text) for text in cells if text]
+    return len(normalized) >= 2 and sum(text in labels for text in normalized) >= 2 and not any(re.search(r"\d", text) for text in normalized)
 
 
 class NumberingResolver:
@@ -705,11 +740,14 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
             continue
 
         table_count += 1
+        table_headers = ""
         for row_index, row in enumerate(block.rows, start=1):
-            cell_texts = [clean_text(cell.text) for cell in row.cells]
-            cell_texts = list(dict.fromkeys(text for text in cell_texts if text))
-            if not cell_texts:
+            cell_texts = _table_cells(row)
+            if not any(cell_texts):
                 continue
+            is_header = _is_table_header(cell_texts)
+            if is_header:
+                table_headers = " | ".join(cell_texts)
             source_order += 1
             joined = " | ".join(cell_texts)
             clause_id = str(uuid.uuid5(uuid.UUID(project_id), f"t:{source_order}:{joined[:160]}"))
@@ -720,9 +758,9 @@ def parse_docx(data: bytes, filename: str, project_id: str) -> tuple[str, list[d
                     "label": f"표 {table_count}-{row_index}",
                     "title": cell_texts[0][:90],
                     "content": joined,
-                    "source_type": "table",
+                    "source_type": "heading" if is_header else "table",
                     "outline_level": None,
-                    "match_context": current_match_context,
+                    "match_context": current_match_context + (f" > [표 열] {table_headers}" if table_headers else ""),
                 }
             )
 
@@ -800,9 +838,7 @@ def build_review_docx(project: dict[str, Any], clauses: list[dict[str, Any]], ki
         edited_content = clean_text(clause.get("edited_content"))
         original_title = clean_text(clause.get("title"))
         original_body = clean_text(clause.get("content"))
-        original_content = original_title if not original_body or original_body == original_title else clean_text(
-            f"{original_title} {original_body}"
-        )
+        original_content = original_title if not original_body else original_body if original_body.startswith(original_title) else clean_text(f"{original_title} {original_body}")
         if kind == "final" and clause.get("decision_reason") == "partial_overlap_residual":
             if not edited_content or edited_content == original_content:
                 raise ValueError(

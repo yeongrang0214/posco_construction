@@ -806,8 +806,8 @@ function CandidatePanel({
           <p className="mt-1 text-sm text-muted-foreground">{candidate.document_name}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={candidate.score >= 0.45 ? 'default' : 'secondary'}>{candidate.classification}</Badge>
-          <Badge variant="outline">{percent(candidate.score)}</Badge>
+          <Badge variant={candidate.classification === '대응 요구사항 확인' ? 'default' : 'secondary'}>{['대응 요구사항 확인', '일부 요구사항 대응', '의미 검증 미완료'].includes(candidate.classification) ? candidate.classification : '의미 검증 전 · 재매칭 필요'}</Badge>
+          <Badge variant="outline" title="검색 순위 점수이며 일치 확률이나 삭제 가능성을 뜻하지 않습니다.">검색 {Math.round(candidate.score * 100)}점</Badge>
         </div>
       </div>
 
@@ -2689,7 +2689,7 @@ export function SpecReviewApp() {
               {[
                 ['추출 조항', project.total_clauses],
                 ['KCS 후보 있음', `${project.candidate_clauses} (${candidateRate}%)`],
-                ['관련성 높음', project.high_match_clauses],
+                ['검색 고득점', project.high_match_clauses],
                 ['후보 없음', Math.max(0, project.reviewable_clauses - project.candidate_clauses)],
                 ['표에서 추출', project.table_clauses],
               ].map(([label, value]) => (

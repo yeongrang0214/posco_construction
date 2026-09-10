@@ -19,7 +19,8 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { DocxSourceViewer } from '@/components/docx-source-viewer';
+import { PdfSourceViewer as DocxSourceViewer } from '@/components/pdf-source-viewer';
+import { TableComparisonPanel } from '@/components/table-comparison';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -75,12 +76,6 @@ function scoreTone(score: number) {
   return 'border-orange-300 bg-orange-50/65 text-orange-950 dark:border-orange-800 dark:bg-orange-950/25 dark:text-orange-100';
 }
 
-function scoreBadgeTone(score: number) {
-  if (score >= 0.45) return 'border-emerald-500/45 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200';
-  if (score >= 0.35) return 'border-amber-500/45 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200';
-  return 'border-orange-500/45 bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-200';
-}
-
 function sourceText(item: Pick<SourceContextItem, 'title' | 'content'>) {
   const title = item.title.trim();
   const content = item.content.trim();
@@ -115,8 +110,8 @@ function CandidateCard({
     <button
       type="button"
       className={cn(
-        'min-w-0 rounded-lg border p-3 text-left transition-shadow hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-55',
-        scoreTone(candidate.score),
+        'flex min-w-0 flex-col items-stretch rounded-lg border p-3 text-left transition-shadow hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-55',
+        candidate.classification === '대응 요구사항 확인' ? scoreTone(0.5) : scoreTone(0.4),
         selected && 'ring-2 ring-primary ring-offset-2 ring-offset-card',
       )}
       onClick={onSelect}
@@ -130,9 +125,10 @@ function CandidateCard({
     >
       <div className="flex items-start justify-between gap-2">
         <span className="min-w-0 text-xs font-semibold leading-5">후보 {candidate.rank} · {candidate.kcs_code} · {candidate.kcs_clause || '본문'}</span>
-        <Badge variant="outline" className={cn('shrink-0 tabular-nums', scoreBadgeTone(candidate.score))}>{Math.round(candidate.score * 100)}%</Badge>
+        <Badge variant="outline" title="검색 정렬용 점수이며 일치 확률이나 삭제 승인 비율이 아닙니다." className="shrink-0 tabular-nums">검색 {Math.round(candidate.score * 100)}점</Badge>
       </div>
       <Badge variant="outline" className="mt-2 text-[10px]">{titleOnly ? '제목 후보' : '본문 후보'}</Badge>
+      <p className="mt-2 text-xs font-semibold">{['대응 요구사항 확인', '일부 요구사항 대응', '의미 검증 미완료'].includes(candidate.classification) ? candidate.classification : '의미 검증 전 · 재매칭 필요'}</p>
       <p className="mt-1 line-clamp-2 text-xs opacity-75">
         {candidate.document_name} · {candidate.version || candidate.update_date || '버전 확인 필요'}
       </p>
@@ -673,7 +669,7 @@ export function BulkReview({
                       {impactNeedsReview && <Badge variant="outline" className="border-amber-500/50 bg-amber-50 text-amber-900">KCS 재검토 필요</Badge>}
                       {saving && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Spinner />저장 중</span>}
                     </div>
-                    <p className="text-xs text-muted-foreground">원문 순서 {item.source_order} · DOCX의 노란 표시가 현재 검토 위치입니다.</p>
+                    <p className="text-xs text-muted-foreground">원문 순서 {item.source_order} · 원문의 노란 표시가 현재 검토 위치입니다.</p>
                   </div>
                   {item.source_type === 'paragraph' && <>
                     {item.content.trim() && <Button size="sm" variant="outline" onClick={() => onSplit(item)} disabled={rowDecisionBusy}><Scissors />나누기</Button>}
@@ -694,6 +690,9 @@ export function BulkReview({
                   />
 
                   <section className="min-h-0 overflow-auto rounded-xl border border-border bg-card p-3 shadow-sm" aria-label="KCS 후보 비교">
+                    <TableComparisonPanel projectId={projectId} clauseId={item.id} enabled={item.source_type === 'table'}
+                      selectedId={item.selected_candidate_id} disabled={rowDecisionBusy || item.decision === 'delete' || reason === 'no_kcs_match'}
+                      onSelect={(candidateId) => selectCandidate(item, candidateId)} fallback={<>
                     <div className="mb-3 flex items-start justify-between gap-2 border-b border-border pb-2">
                       <div>
                         <p className="text-sm font-semibold">KCS 후보 · 최대 3개</p>
@@ -712,7 +711,7 @@ export function BulkReview({
                             대응 KCS 없음으로 판정 중입니다. KCS 후보는 판정 근거로 선택되지 않습니다.
                           </p>
                         )}
-                        <div className="grid min-w-0 gap-2 2xl:grid-cols-3">
+                        <div className="grid min-w-0 grid-cols-1 gap-2">
                           {candidates.map((candidate) => {
                             const selected = item.selected_candidate_id === candidate.id;
                             const titleOnly = candidateIsTitleOnly(candidate);
@@ -734,7 +733,7 @@ export function BulkReview({
                       <div className="grid min-h-36 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-4 text-center text-sm leading-6 text-muted-foreground">
                         {item.excluded_candidate_count > 0
                           ? `관련성 낮음으로 제외된 후보 ${item.excluded_candidate_count}개가 있습니다.`
-                          : '25% 이상인 KCS 본문 후보가 없습니다.'}
+                          : '대응하는 KCS 본문 후보를 확인하지 못했습니다. 담당자 판단으로 남김·삭제·보류할 수 있습니다.'}
                       </div>
                     )}
 
@@ -759,6 +758,7 @@ export function BulkReview({
                         </div>
                       ) : <p className="py-6 text-center text-sm text-muted-foreground">KCS 본문 후보를 선택하면 차이를 표시합니다.</p>}
                     </div>
+                    </>} />
                     <div className="sticky bottom-0 z-10 -mx-3 -mb-3 mt-3 flex items-center justify-between gap-3 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_18px_rgba(15,23,42,0.08)] backdrop-blur">
                       <Button size="sm" variant="outline" onClick={() => moveActive(-1)} disabled={rowDecisionBusy || !hasPreviousClause}>
                         <ArrowLeft />이전 문구
@@ -915,7 +915,7 @@ export function BulkReview({
                           ? '문서 구조 제목이라 KCS 매칭 대상에서 제외했습니다.'
                           : item.excluded_candidate_count > 0
                             ? `관련성 낮음으로 제외된 후보 ${item.excluded_candidate_count}개가 있습니다. 상세 비교에서 제외 근거를 확인할 수 있습니다.`
-                            : '25% 이상인 KCS 후보가 없습니다.'}
+                            : '대응하는 KCS 본문 후보를 확인하지 못했습니다.'}
                       </div>
                     )}
                   </section>

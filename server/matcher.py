@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from . import text_analysis
+from .relevance import apply_verdicts, clearly_unrelated, own_requirement, query_text, contextual_requirement
+from .table_evidence import table_candidates
 from .kcs_sync import (
     catalog_revision,
     raw_section_is_usable,
@@ -22,7 +24,7 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
-CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.1-calibrated-warnings"
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.2-requirement-validation"
 
 
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
@@ -1044,6 +1046,8 @@ def _candidate_rows(
     clause: dict[str, Any],
     source_text: str,
     ranked: list[tuple[dict[str, Any], float, float | None]],
+    limit: int = 3,
+    min_relevance: float = 0.25,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -1061,6 +1065,8 @@ def _candidate_rows(
     ordered = [*reserved, *(item for item in ranked if _section_key(item[0]) not in reserved_keys)]
 
     for section, score, semantic_score in ordered:
+        if clearly_unrelated(own_requirement(clause) or source_text, section.get("content", "")):
+            continue
         explicit_reference = bool(section.get("_explicit_reference"))
         title_only = normalize_key(section["content"]) == normalize_key(section["title"])
         content_key = re.sub(r"[^0-9a-z가-힣]", "", section["content"].lower())
@@ -1071,18 +1077,18 @@ def _candidate_rows(
         if (title_only or non_substantive_fragment) and not explicit_reference:
             continue
         relevance_score = float(section.get("_candidate_relevance_score", score))
-        if relevance_score < 0.25 and not explicit_reference:
+        if relevance_score < min_relevance and not explicit_reference:
             continue
         raw_clause = clean_space(section.get("clause"))
         clause_key = re.sub(r"\s+", "", raw_clause).casefold()
         if not clause_key:
             clause_key = normalize_key(f"{section.get('title', '')} {section.get('content', '')}")
-        key = (_code_digits(section["code"]), clause_key)
+        key = (_code_digits(section["code"]), normalize_key(f"{section.get('title', '')} {clause_key} {section['content']}"))
         if key in seen:
             continue
         seen.add(key)
         candidate_content = section.get("display_content") or section["content"]
-        reasons, warnings = _comparison_metadata(source_text, candidate_content)
+        reasons, warnings = _comparison_metadata(own_requirement(clause) or source_text, candidate_content)
         if section.get("context_resolved"):
             if section.get("forward_dependent"):
                 reasons.append("참조 표현의 인접 조항을 함께 비교했습니다.")
@@ -1096,7 +1102,7 @@ def _candidate_rows(
         candidate_id = str(
             uuid.uuid5(
                 uuid.UUID(clause["id"]),
-                f"{section['code']}:{section['clause']}:{section['version']}:{rank}",
+                f"{section['code']}:{section['clause']}:{section['version']}:{key[1]}",
             )
         )
         candidates.append(
@@ -1112,11 +1118,12 @@ def _candidate_rows(
                 "content": candidate_content,
                 "score": round(score, 4),
                 "classification": "명시 KCS 참조" if explicit_reference else classify(score),
+                "_requires_verification": relevance_score < 0.25 and not explicit_reference,
                 "reasons": reasons,
                 "warnings": warnings,
             }
         )
-        if len(candidates) == 3:
+        if len(candidates) == limit:
             break
     return candidates
 
@@ -1142,34 +1149,11 @@ def match_clauses(
         tuple[dict[str, Any], str, list[tuple[dict[str, Any], float]]]
     ] = []
     staged_candidates: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-    reviewable_indices = [
-        index for index, item in enumerate(clauses)
-        if item.get("source_type") in {"paragraph", "table"}
-    ]
-    reviewable_positions = {index: position for position, index in enumerate(reviewable_indices)}
     for clause_index, clause in enumerate(clauses):
         if clause.get("source_type") not in {"paragraph", "table"}:
             staged_candidates.append((clause, []))
             continue
-        own_text = clean_space(
-            f"{clause.get('match_context', '')} "
-            f"{clause['title']} {clause['title']} {clause['content']}"
-        )
-        compact_own = re.sub(r"[^0-9a-z가-힣]", "", own_text.lower())
-        needs_adjacent_context = (
-            len(compact_own) < 45
-            or bool(SOURCE_CONTEXT_REFERENCE_RE.search(own_text))
-            or bool(FORWARD_CONTEXT_REFERENCE_RE.search(own_text))
-        )
-        context_parts: list[str] = [own_text]
-        position = reviewable_positions.get(clause_index, -1)
-        if needs_adjacent_context and position > 0:
-            previous = clauses[reviewable_indices[position - 1]]
-            context_parts.append(clean_space(f"{previous.get('title', '')} {previous.get('content', '')}"))
-        if needs_adjacent_context and 0 <= position < len(reviewable_indices) - 1:
-            following = clauses[reviewable_indices[position + 1]]
-            context_parts.append(clean_space(f"{following.get('title', '')} {following.get('content', '')}"))
-        source_text = clean_space(" ".join(context_parts))
+        source_text = clean_space(query_text(clauses, clause_index))
         prepared.append((clause, source_text, _rank_matches(source_text, raw_dir, prefixes)))
 
     batch_method = getattr(ai_client, "embedding_score_groups", None)
@@ -1230,12 +1214,32 @@ def match_clauses(
             embeddings_used = embeddings_used or any(
                 semantic_score is not None for _, _, semantic_score in ranked
             )
-        staged_candidates.append(
-            (clause, _candidate_rows(clause, source_text, ranked))
-        )
+        can_verify = callable(getattr(ai_client, "verify_candidate_groups", None)) and getattr(ai_client, "available", False) and getattr(ai_client, "embeddings_available", True)
+        staged_candidates.append((clause, _candidate_rows(
+            clause, source_text, ranked, limit=6, min_relevance=0.1 if can_verify else 0.25,
+        )))
 
+    verifier = getattr(ai_client, "verify_candidate_groups", None)
+    active = [(clause, rows) for clause, rows in staged_candidates if rows]
+    verified = None
+    if active and callable(verifier) and getattr(ai_client, "available", False) and getattr(ai_client, "embeddings_available", True):
+        try:
+            verified = verifier([
+                (contextual_requirement(clause), [row["content"] for row in rows])
+                for clause, rows in active
+            ])
+        except OpenAIAPIError:
+            # Never silently call a failed semantic check an equivalent requirement.
+            verified = None
+    verdict_map = {clause["id"]: results for (clause, _), results in zip(active, verified or [])}
     for clause, candidates in staged_candidates:
-        clause["candidates"] = candidates
+        clause["candidates"] = apply_verdicts(candidates, verdict_map.get(clause["id"]))
+        exact_rows = table_candidates(clause, raw_dir, prefixes)
+        if exact_rows:
+            keys = {(c["kcs_code"], c["kcs_clause"]) for c in exact_rows}
+            clause["candidates"] = (exact_rows + [c for c in clause["candidates"] if (c["kcs_code"], c["kcs_clause"]) not in keys])[:3]
+            for rank, candidate in enumerate(clause["candidates"], 1):
+                candidate["rank"] = rank
 
     return {
         "mode": "openai_embeddings" if embeddings_used else "local",

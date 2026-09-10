@@ -282,6 +282,18 @@ export interface Candidate {
   ai_analysis?: CandidateAiAnalysis | null;
 }
 
+export interface TableComparison {
+  applicable: boolean;
+  source?: { caption: string; context: string; standards: string[]; grades: string[]; thickness: string[]; products: string[]; row: string };
+  evidence?: {
+    kind: 'KCS' | 'KDS'; code: string; document_name: string; version: string; update_date: string;
+    section: string; table: string; excerpt: string; matched_grades: string[]; candidate_id: string | null;
+  }[];
+  checks?: { field: string; source: string; status: 'found' | 'unconfirmed'; result: string }[];
+  warnings?: string[];
+  notice?: string;
+}
+
 export interface ClauseDetail extends ClauseSummary {
   project_id: string;
   content: string;
@@ -573,8 +585,14 @@ export const api = {
     request<{ items: DocumentMapItem[] }>(`/api/projects/${projectId}/document-map`),
   projectSourceDocxUrl: (projectId: string) =>
     `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/source.docx`,
+  projectSourcePdfUrl: (projectId: string) =>
+    `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/source.pdf`,
+  projectSourcePreviewUrl: (projectId: string) =>
+    `${API_BASE}/api/projects/${encodeURIComponent(projectId)}/source-preview`,
   clause: (projectId: string, clauseId: string) =>
     request<{ clause: ClauseDetail }>(`/api/projects/${projectId}/clauses/${clauseId}`),
+  tableComparison: (projectId: string, clauseId: string) =>
+    request<TableComparison>(`/api/projects/${projectId}/clauses/${clauseId}/table-comparison`),
   quickReviewClause: (
     projectId: string,
     clauseId: string,

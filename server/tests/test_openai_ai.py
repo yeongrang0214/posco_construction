@@ -1216,7 +1216,8 @@ def test_explicit_kcs_references_reserve_one_candidate_per_code_without_score_bo
         "KCS 22 22 22",
         "KCS 33 33 33",
     }
-    assert all(item["classification"] == "명시 KCS 참조" for item in clause["candidates"])
+    assert all(item["classification"] == "의미 검증 미완료" for item in clause["candidates"])
+    assert all("포스코 원문이 이 KCS 코드를 직접 참조합니다." in item["reasons"] for item in clause["candidates"])
 
 
 def test_scoped_data_corruption_is_not_silently_treated_as_no_match(tmp_path):
@@ -1281,7 +1282,7 @@ def test_candidate_rows_remove_duplicate_versions_of_the_same_kcs_clause():
     assert len(candidates) == 1
 
 
-def test_candidate_rows_dedupe_symbol_only_clause_labels():
+def test_candidate_rows_preserve_distinct_bodies_with_same_symbol_label():
     clause = {"id": str(uuid.uuid4())}
     shared = {
         "code": "KCS 24 31 10",
@@ -1296,7 +1297,7 @@ def test_candidate_rows_dedupe_symbol_only_clause_labels():
         ({**shared, "content": "스터드 용접부를 검사한다."}, 0.48, None),
     ]
 
-    assert len(_candidate_rows(clause, "용접부를 검사한다.", ranked)) == 1
+    assert len(_candidate_rows(clause, "용접부를 검사한다.", ranked)) == 2
 
 
 def test_scope_bonus_does_not_publish_a_low_relevance_candidate():

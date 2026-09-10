@@ -135,7 +135,7 @@ def test_short_source_fragment_uses_adjacent_requirements(tmp_path, monkeypatch)
 
     match_clauses(clauses, tmp_path, ("4131",))
 
-    assert "맞댐용접을 한다" in captured[1]
+    assert "맞댐용접을 한다" not in captured[1]
     assert "모재 두께 25 mm" in captured[1]
 
 

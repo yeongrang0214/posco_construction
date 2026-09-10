@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -42,6 +43,8 @@ from .matcher import (
     read_snapshot,
 )
 from .openai_ai import OpenAIAPIError, OpenAIClient
+from .source_preview import request_preview, map_clauses
+from .table_evidence import compare_table
 from .storage import (
     CURRENT_PARSER_VERSION,
     DATABASE_SCHEMA_VERSION,
@@ -1233,6 +1236,41 @@ def get_project_source_docx(project_id: str):
     )
 
 
+def _preview_source(project_id: str) -> Path:
+    project = _project_or_404(project_id)
+    try:
+        source = Path(str(project.get("source_path") or "")).resolve(strict=True)
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="업로드 원본 파일을 찾을 수 없습니다.")
+    if source.parent != settings.uploads_dir.resolve() or source.suffix.lower() not in {".doc", ".docx"}:
+        raise HTTPException(status_code=404, detail="업로드 원본 파일을 찾을 수 없습니다.")
+    return source
+
+
+@app.get("/api/projects/{project_id}/source-preview")
+def get_source_preview(project_id: str):
+    source = _preview_source(project_id)
+    try:
+        status, path = request_preview(source, settings.data_dir / "source-previews")
+        if status != "ready":
+            return {"status": status}
+        return map_clauses(json.loads(path.with_suffix(".json").read_text(encoding="utf-8")), store.document_map(project_id))
+    except (RuntimeError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="원문 PDF를 준비하지 못했습니다. 텍스트 보기로 검토하거나 원본을 내려받으세요.") from exc
+
+
+@app.get("/api/projects/{project_id}/source.pdf")
+def get_source_pdf(project_id: str):
+    source = _preview_source(project_id)
+    try:
+        status, path = request_preview(source, settings.data_dir / "source-previews")
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(status_code=409, detail="원문 PDF를 준비하지 못했습니다.") from exc
+    if status != "ready":
+        raise HTTPException(status_code=409, detail="원문 PDF를 변환 중입니다. 잠시 후 다시 시도하세요.")
+    return FileResponse(path, media_type="application/pdf", headers={"Cache-Control": "private, no-store"})
+
+
 @app.get("/api/projects/{project_id}/review-workflow")
 def get_review_workflow(project_id: str):
     _project_or_404(project_id)
@@ -1394,6 +1432,16 @@ def get_clause(project_id: str, clause_id: str):
     if not clause:
         raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
     return {"clause": clause}
+
+
+@app.get("/api/projects/{project_id}/clauses/{clause_id}/table-comparison")
+def get_table_comparison(project_id: str, clause_id: str):
+    project = _project_or_404(project_id)
+    clause = store.get_clause(project_id, clause_id)
+    if not clause:
+        raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
+    prefixes = tuple(dict.fromkeys(a + b for a, b in re.findall(r"KCS\s*(\d{2})\s*(\d{2})", project.get("kcs_scope") or "")))
+    return compare_table(clause, settings, prefixes or ("",))
 
 
 @app.post("/api/projects/{project_id}/clauses/merge")

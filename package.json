@@ -6,10 +6,13 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "predev": "node scripts/prepare-pdf-worker.mjs",
     "dev": "vinext dev",
+    "prelocal": "node scripts/prepare-pdf-worker.mjs",
     "local": "node scripts/start-local.mjs",
     "backend": "node scripts/start-backend.mjs",
     "setup:python": "node scripts/install-python-deps.mjs",
+    "prebuild": "node scripts/prepare-pdf-worker.mjs",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
@@ -26,6 +29,7 @@
     "embla-carousel-react": "8.5.2",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
+    "pdfjs-dist": "6.3.289",
     "react": "19.2.6",
     "react-day-picker": "9.8.1",
     "react-dom": "19.2.6",

@@ -337,6 +337,33 @@ def test_source_docx_endpoint_serves_only_files_inside_upload_root(bulk_client, 
     assert "outside" not in blocked.text
 
 
+def test_pdf_preview_pending_ready_and_path_boundary(bulk_client, tmp_path, monkeypatch):
+    import json
+    client, test_store, project_id = bulk_client
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    source = upload_root / "source.docx"
+    source.write_bytes(b"source")
+    with test_store.connect() as connection:
+        connection.execute("UPDATE projects SET source_path = ? WHERE id = ?", (str(source), project_id))
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, uploads_dir=upload_root, data_dir=tmp_path))
+    pdf = tmp_path / "cached.pdf"
+    monkeypatch.setattr(app_module, "request_preview", lambda *_: ("processing", pdf))
+    assert client.get(f"/api/projects/{project_id}/source-preview").json()["status"] == "processing"
+    assert client.get(f"/api/projects/{project_id}/source.pdf").status_code == 409
+    pdf.write_bytes(b"%PDF-1.7 test")
+    pdf.with_suffix(".json").write_text(json.dumps({"pages": [{"page": 1, "width": 595, "height": 842, "chars": []}]}), encoding="utf-8")
+    monkeypatch.setattr(app_module, "request_preview", lambda *_: ("ready", pdf))
+    payload = client.get(f"/api/projects/{project_id}/source-preview").json()
+    assert payload["status"] == "ready" and "chars" not in payload["pages"][0]
+    response = client.get(f"/api/projects/{project_id}/source.pdf")
+    assert response.status_code == 200 and response.headers["content-type"] == "application/pdf"
+    with test_store.connect() as connection:
+        connection.execute("UPDATE projects SET source_path = ? WHERE id = ?", (str(pdf), project_id))
+    assert client.get(f"/api/projects/{project_id}/source-preview").status_code == 404
+    assert client.get(f"/api/projects/{project_id}/source.pdf").status_code == 404
+
+
 def test_title_only_candidate_cannot_be_used_as_delete_evidence(bulk_client):
     _, test_store, project_id = bulk_client
     with test_store.connect() as connection:
