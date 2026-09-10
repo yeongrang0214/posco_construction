@@ -446,7 +446,7 @@ export async function matchClause(
         || /(?:한다|된다|있다|없다|따른다|하여야|해야|원칙)/.test(candidateContent);
       const contextPenalty = CONTEXT_REFERENCE.test(candidateContent) || FORWARD_CONTEXT_REFERENCE.test(candidateContent) ? 0.88 : 1;
       const relevanceScore = baseScore * contextPenalty * scopePenalty;
-      const finalScore = Math.min(1, relevanceScore + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0));
+      const finalScore = Math.min(1, 0.84 * relevanceScore + (inScope ? 0.08 : 0) + (equivalentMatch ? 0.08 : 0));
       return {
         id: text(row.id),
         score: finalScore,
@@ -455,7 +455,7 @@ export async function matchClause(
         equivalentMatch,
         inScope,
         candidateText: `${candidateContext} ${candidateContent}`.trim(),
-        dedupeKey: `${code}:${normalize(text(row.kcs_clause)) || text(row.id)}`,
+        dedupeKey: `${code}:${text(row.kcs_clause).replace(/\s+/g, '').toLowerCase() || text(row.id)}`,
       };
     })
     .filter((entry) => entry.id && entry.eligible && entry.relevanceScore >= 0.25)
@@ -664,7 +664,7 @@ export async function rematchCloudProject(projectId: string) {
     started_at: finishedAt,
     finished_at: finishedAt,
     matcher_signature: {
-      matcher: 'hybrid-kcs-v5-calibrated-warnings',
+      matcher: 'hybrid-kcs-v5.1-calibrated-warnings',
       domain_equivalents: true,
       adjacent_context: true,
       scope_guard: true,

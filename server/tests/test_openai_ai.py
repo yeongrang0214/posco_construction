@@ -1250,7 +1250,7 @@ def test_internal_lexical_pool_keeps_forty_items_for_semantic_reranking(tmp_path
 
 def test_displayed_scores_use_the_same_order_as_scope_aware_ranking():
     ranked = [
-        ({"code": "KCS 41 31 15", "clause": "1.1", "content": "공작도", "_equivalent_scope": True}, 0.42),
+        ({"code": "KCS 41 31 15", "clause": "1.1", "content": "공작도", "_equivalent_scope": True}, 0.5),
         ({"code": "KCS 41 31 20", "clause": "1.2", "content": "철골 제작"}, 0.55),
     ]
 
@@ -1279,6 +1279,24 @@ def test_candidate_rows_remove_duplicate_versions_of_the_same_kcs_clause():
     candidates = _candidate_rows(clause, "공작도를 작성한다.", ranked)
 
     assert len(candidates) == 1
+
+
+def test_candidate_rows_dedupe_symbol_only_clause_labels():
+    clause = {"id": str(uuid.uuid4())}
+    shared = {
+        "code": "KCS 24 31 10",
+        "document_name": "강구조공사",
+        "version": "2026",
+        "update_date": "2026-08-01",
+        "clause": "①",
+        "title": "검사방법",
+    }
+    ranked = [
+        ({**shared, "content": "용접부를 검사한다."}, 0.51, None),
+        ({**shared, "content": "스터드 용접부를 검사한다."}, 0.48, None),
+    ]
+
+    assert len(_candidate_rows(clause, "용접부를 검사한다.", ranked)) == 1
 
 
 def test_scope_bonus_does_not_publish_a_low_relevance_candidate():

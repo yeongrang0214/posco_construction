@@ -22,7 +22,7 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
-CURRENT_MATCHER_VERSION = "hybrid-kcs-v5-calibrated-warnings"
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.1-calibrated-warnings"
 
 
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
@@ -968,15 +968,16 @@ def _final_rank_score(
 ) -> float:
     """Return the same calibrated score used for both ordering and display."""
 
-    priority_weight = 0.15 if embeddings_used else 0.08
-    base_weight = 0.85 if embeddings_used else 1.0
+    priority_weight = 0.08
+    base_weight = 0.84 if embeddings_used else 0.82
     score = (
         base_weight * relevance_score
         + priority_weight * float(section.get("_retrieval_priority", 0.0))
-        + (0.16 if section.get("_keyword_scope") else 0.0)
-        + (0.2 if section.get("_equivalent_scope") else 0.0)
-        + (1.0 if section.get("_explicit_reference") else 0.0)
+        + (0.03 if section.get("_keyword_scope") else 0.0)
+        + ((0.05 if embeddings_used else 0.07) if section.get("_equivalent_scope") else 0.0)
     )
+    if section.get("_explicit_reference"):
+        return 1.0
     return max(0.0, min(1.0, score))
 
 
@@ -1072,7 +1073,8 @@ def _candidate_rows(
         relevance_score = float(section.get("_candidate_relevance_score", score))
         if relevance_score < 0.25 and not explicit_reference:
             continue
-        clause_key = normalize_key(section.get("clause"))
+        raw_clause = clean_space(section.get("clause"))
+        clause_key = re.sub(r"\s+", "", raw_clause).casefold()
         if not clause_key:
             clause_key = normalize_key(f"{section.get('title', '')} {section.get('content', '')}")
         key = (_code_digits(section["code"]), clause_key)
