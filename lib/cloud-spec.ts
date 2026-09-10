@@ -202,6 +202,113 @@ function tokens(value: string) {
     .filter((token) => token.length >= 2);
 }
 
+type TechnicalQuantity = {
+  value: number;
+  unit: string;
+  family: string;
+  canonicalValue: number;
+};
+
+const TOPIC_STOPWORDS = new Set([
+  '그리고', '그러나', '따라', '따른', '대하여', '대한', '되어야', '되는', '또는',
+  '모든', '사용', '사용하는', '위하여', '위한', '있다', '없다', '하여야', '한다',
+  '하며', '해당', '경우', '것으로', '필요', '실시', '관련', '기타',
+]);
+const KOREAN_PARTICLES = [
+  '으로부터', '에서는', '에게서', '으로써', '으로서', '부터', '까지', '에게',
+  '에서', '으로', '와', '과', '을', '를', '은', '는', '이', '가', '의', '에', '로',
+];
+const QUANTITY_PATTERN = /([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(GPa|MPa|kPa|Pa|kN|N|mm(?:2|3|²|³)?|cm(?:2|3|²|³)?|m(?:2|3|²|³)?|km|mg|kg|g|t|°C|㎇|㎝|㎞|㎟|㎠|㎡|㎎|㎏|℃|%|시간|분|초|일|회|개)(?![A-Za-z])/giu;
+const LIMIT_PATTERN = /(이상|이하|초과|미만)(?!적)/gu;
+const PROHIBITION_PATTERN = /금지|불가|(?:하여서는|해서는|하면)\s*(?:안|아니)\s*된다|할\s*수\s*없다|하지\s*않는다|아니한다/gu;
+const OBLIGATION_PATTERN = /(?:하여야|해야(?:만)?|되어야|이어야)\s*(?:한다|하며|하고|함)|반드시|필수|의무(?!\s*(?:가\s*)?없)|하도록\s*한다/gu;
+
+function topicTokens(value: string) {
+  return new Set(
+    (value.toLowerCase().match(/[a-z가-힣]{2,}/g) || [])
+      .map((raw) => {
+        for (const suffix of KOREAN_PARTICLES) {
+          if (raw.length > suffix.length + 1 && raw.endsWith(suffix))
+            return raw.slice(0, -suffix.length);
+        }
+        return raw;
+      })
+      .filter((token) => token.length >= 2 && !TOPIC_STOPWORDS.has(token)),
+  );
+}
+
+function hasTopicOverlap(left: string, right: string) {
+  const leftTokens = topicTokens(left);
+  const rightTokens = topicTokens(right);
+  for (const leftToken of leftTokens) {
+    if (rightTokens.has(leftToken)) return true;
+    for (const rightToken of rightTokens) {
+      if (
+        Math.min(leftToken.length, rightToken.length) >= 3 &&
+        (leftToken.includes(rightToken) || rightToken.includes(leftToken))
+      ) return true;
+    }
+  }
+  return false;
+}
+
+function technicalQuantities(value: string): TechnicalQuantity[] {
+  const conversions: Record<string, [string, number]> = {
+    mm: ['length', 1], cm: ['length', 10], m: ['length', 1000], km: ['length', 1_000_000],
+    'mm²': ['area', 1], 'cm²': ['area', 100], 'm²': ['area', 1_000_000],
+    'mm³': ['volume', 1], 'cm³': ['volume', 1000], 'm³': ['volume', 1_000_000_000],
+    Pa: ['pressure', 1], kPa: ['pressure', 1000], MPa: ['pressure', 1_000_000], GPa: ['pressure', 1_000_000_000],
+    N: ['force', 1], kN: ['force', 1000], mg: ['mass', 0.001], g: ['mass', 1], kg: ['mass', 1000], t: ['mass', 1_000_000],
+  };
+  const aliases: Record<string, string> = {
+    '㎇': 'mm', '㎝': 'cm', '㎞': 'km', '㎟': 'mm²', '㎠': 'cm²', '㎡': 'm²',
+    '㎎': 'mg', '㎏': 'kg', '°c': '℃', '℃': '℃',
+    gpa: 'GPa', mpa: 'MPa', kpa: 'kPa', pa: 'Pa', kn: 'kN', n: 'N',
+  };
+  const result: TechnicalQuantity[] = [];
+  for (const match of value.matchAll(QUANTITY_PATTERN)) {
+    const number = Number((match[1] || '').replace(/,/g, ''));
+    const rawUnit = match[2] || '';
+    const foldedUnit = rawUnit.replace(/2/g, '²').replace(/3/g, '³');
+    const unit = aliases[foldedUnit.toLowerCase()] || foldedUnit;
+    const [family, factor] = conversions[unit] || [unit.toLowerCase(), 1];
+    if (Number.isFinite(number)) result.push({ value: number, unit, family, canonicalValue: number * factor });
+  }
+  return result;
+}
+
+function sameQuantity(left: TechnicalQuantity, right: TechnicalQuantity) {
+  if (left.family !== right.family) return false;
+  const scale = Math.max(1, Math.abs(left.canonicalValue), Math.abs(right.canonicalValue));
+  return Math.abs(left.canonicalValue - right.canonicalValue) <= scale * 1e-9;
+}
+
+function patternMatches(value: string, pattern: RegExp) {
+  pattern.lastIndex = 0;
+  return [...value.matchAll(pattern)].map((match) => match[0]);
+}
+
+function technicalWarnings(posco: string, kcs: string) {
+  if (!hasTopicOverlap(posco, kcs)) return [];
+  const warnings: string[] = [];
+  const poscoQuantities = technicalQuantities(posco);
+  const kcsQuantities = technicalQuantities(kcs);
+  if (
+    poscoQuantities.length &&
+    poscoQuantities.some((source) => !kcsQuantities.some((target) => sameQuantity(source, target)))
+  ) warnings.push('수치·단위가 다르거나 KCS에 없어 기술 검토가 필요합니다.');
+
+  const poscoLimits = new Set(patternMatches(posco, LIMIT_PATTERN));
+  const kcsLimits = new Set(patternMatches(kcs, LIMIT_PATTERN));
+  if (poscoLimits.size && [...poscoLimits].some((value) => !kcsLimits.has(value)))
+    warnings.push('이상·이하·초과·미만 표현이 다릅니다.');
+  if (patternMatches(posco, PROHIBITION_PATTERN).length && !patternMatches(kcs, PROHIBITION_PATTERN).length)
+    warnings.push('포스코의 금지 표현이 KCS에 없습니다.');
+  if (patternMatches(posco, OBLIGATION_PATTERN).length && !patternMatches(kcs, OBLIGATION_PATTERN).length)
+    warnings.push('포스코의 의무 표현이 KCS에 없습니다.');
+  return warnings;
+}
+
 function similarity(source: string, candidate: string) {
   const sourceTokens = tokens(source);
   const candidateTokens = tokens(candidate);
@@ -338,16 +445,24 @@ export async function matchClause(
       const substantive = normalize(candidateContent).replace(/[^0-9a-z가-힣]/g, '').length >= 20
         || /(?:한다|된다|있다|없다|따른다|하여야|해야|원칙)/.test(candidateContent);
       const contextPenalty = CONTEXT_REFERENCE.test(candidateContent) || FORWARD_CONTEXT_REFERENCE.test(candidateContent) ? 0.88 : 1;
+      const relevanceScore = baseScore * contextPenalty * scopePenalty;
+      const finalScore = Math.min(1, relevanceScore + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0));
       return {
         id: text(row.id),
-        score: baseScore * contextPenalty * scopePenalty,
+        score: finalScore,
+        relevanceScore,
         eligible: !titleOnly && substantive,
-        rankScore: baseScore * contextPenalty * scopePenalty + (inScope ? 0.12 : 0) + (equivalentMatch ? 0.2 : 0),
         equivalentMatch,
+        inScope,
+        candidateText: `${candidateContext} ${candidateContent}`.trim(),
+        dedupeKey: `${code}:${normalize(text(row.kcs_clause)) || text(row.id)}`,
       };
     })
-    .filter((entry) => entry.id && entry.eligible && entry.score >= 0.25)
-    .sort((a, b) => b.rankScore - a.rankScore || b.score - a.score)
+    .filter((entry) => entry.id && entry.eligible && entry.relevanceScore >= 0.25)
+    .sort((a, b) => b.score - a.score || b.relevanceScore - a.relevanceScore)
+    .filter((entry, index, entries) =>
+      entries.findIndex((candidate) => candidate.dedupeKey === entry.dedupeKey) === index,
+    )
     .slice(0, 3);
 
   await db
@@ -372,10 +487,10 @@ export async function matchClause(
         entry.score,
         JSON.stringify([
           '클라우드 토큰 유사도',
+          ...(entry.inScope ? ['동일 공종 KCS 범위'] : []),
           ...(entry.equivalentMatch ? ['건설 전문용어 동의어 일치'] : []),
-          '수치 일치 보정',
         ]),
-        '[]',
+        JSON.stringify(technicalWarnings(content, entry.candidateText)),
         createdAt,
       )
       .run();
@@ -548,6 +663,13 @@ export async function rematchCloudProject(projectId: string) {
     error: '',
     started_at: finishedAt,
     finished_at: finishedAt,
-    matcher_signature: { domain_equivalents: true, adjacent_context: true, scope_guard: true },
+    matcher_signature: {
+      domain_equivalents: true,
+      adjacent_context: true,
+      scope_guard: true,
+      display_score_aligned: true,
+      duplicate_candidates_removed: true,
+      technical_warning_gate: true,
+    },
   };
 }

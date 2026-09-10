@@ -7,7 +7,13 @@ import httpx
 import pytest
 
 import server.openai_ai as openai_ai_module
-from server.matcher import _rank_matches, load_kcs_sections, match_clauses
+from server.matcher import (
+    _candidate_rows,
+    _rank_matches,
+    _rerank_from_scores,
+    load_kcs_sections,
+    match_clauses,
+)
 from server.openai_ai import OpenAIAPIError, OpenAIClient, coverage_source_segments
 
 
@@ -1239,3 +1245,36 @@ def test_internal_lexical_pool_keeps_forty_items_for_semantic_reranking(tmp_path
     ranked = _rank_matches(source, raw, ("4131",))
 
     assert len(ranked) == 40
+
+
+def test_displayed_scores_use_the_same_order_as_scope_aware_ranking():
+    ranked = [
+        ({"code": "KCS 41 31 15", "clause": "1.1", "content": "공작도", "_equivalent_scope": True}, 0.42),
+        ({"code": "KCS 41 31 20", "clause": "1.2", "content": "철골 제작"}, 0.55),
+    ]
+
+    result = _rerank_from_scores(ranked, [0.5, 0.5])
+
+    assert result[0][0]["clause"] == "1.1"
+    assert result[0][1] >= result[1][1]
+
+
+def test_candidate_rows_remove_duplicate_versions_of_the_same_kcs_clause():
+    clause_id = str(uuid.uuid4())
+    clause = {"id": clause_id}
+    shared = {
+        "code": "KCS 41 31 15",
+        "document_name": "건축물 강구조공사",
+        "version": "2026",
+        "update_date": "2026-08-01",
+        "clause": "3.2.1",
+        "title": "공작도",
+    }
+    ranked = [
+        ({**shared, "content": "공작도를 작성한다."}, 0.7, None),
+        ({**shared, "content": "공작도를 작성하고 승인받는다."}, 0.69, None),
+    ]
+
+    candidates = _candidate_rows(clause, "공작도를 작성한다.", ranked)
+
+    assert len(candidates) == 1

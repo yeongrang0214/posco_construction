@@ -70,3 +70,30 @@ def test_detects_prohibition_and_obligation_presence_differences():
 
 def test_returns_empty_lists_for_empty_texts():
     assert analyze_text_differences("", "") == {"warnings": [], "differences": []}
+
+
+def test_ignores_extra_kcs_quantities_that_do_not_remove_a_posco_requirement():
+    result = analyze_text_differences(
+        "공작도를 작성하여 감독원의 승인을 받아야 한다.",
+        "공작도를 작성한다. 강판 두께가 12 mm 이상인 경우 별도로 표시한다.",
+    )
+
+    assert result == {"warnings": [], "differences": []}
+
+
+def test_ignores_modality_and_quantity_differences_for_unrelated_topics():
+    result = analyze_text_differences(
+        "철골 공작도를 작성하여야 한다.",
+        "방수층 두께는 3 mm 이상이어야 하며 누수를 금지한다.",
+    )
+
+    assert result == {"warnings": [], "differences": []}
+
+
+def test_normalises_convertible_units_before_warning():
+    result = analyze_text_differences(
+        "강판 길이는 1000 mm 이상이어야 한다.",
+        "강판 길이는 1 m 이상이어야 한다.",
+    )
+
+    assert result == {"warnings": [], "differences": []}

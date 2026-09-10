@@ -30,6 +30,17 @@ _OBLIGATION_RE = re.compile(
     r"반드시|필수|의무(?!\s*(?:가\s*)?없)|하도록\s*한다"
 )
 
+_TOPIC_TOKEN_RE = re.compile(r"[A-Za-z가-힣]{2,}")
+_TOPIC_STOPWORDS = {
+    "그리고", "그러나", "따라", "따른", "대하여", "대한", "되어야", "되는", "또는",
+    "모든", "사용", "사용하는", "위하여", "위한", "있다", "없다", "하여야", "한다",
+    "하며", "해당", "경우", "것으로", "한다면", "필요", "실시", "관련", "기타",
+}
+_KOREAN_PARTICLES = (
+    "으로부터", "에서는", "에게서", "으로써", "으로서", "부터", "까지", "에게",
+    "에서", "으로", "와", "과", "을", "를", "은", "는", "이", "가", "의", "에", "로",
+)
+
 _UNIT_ALIASES = {
     "㎜": "mm",
     "㎝": "cm",
@@ -99,6 +110,71 @@ def _matches(pattern: re.Pattern[str], text: str) -> list[str]:
     return sorted({match.group(0) for match in pattern.finditer(text)})
 
 
+def _topic_tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw in _TOPIC_TOKEN_RE.findall(text.casefold()):
+        token = raw
+        for suffix in _KOREAN_PARTICLES:
+            if len(token) > len(suffix) + 1 and token.endswith(suffix):
+                token = token[: -len(suffix)]
+                break
+        if len(token) >= 2 and token not in _TOPIC_STOPWORDS:
+            tokens.add(token)
+    return tokens
+
+
+def _has_topic_overlap(left: str, right: str) -> bool:
+    left_tokens = _topic_tokens(left)
+    right_tokens = _topic_tokens(right)
+    if left_tokens & right_tokens:
+        return True
+    return any(
+        min(len(left_token), len(right_token)) >= 3
+        and (left_token in right_token or right_token in left_token)
+        for left_token in left_tokens
+        for right_token in right_tokens
+    )
+
+
+def _canonical_quantity(item: dict[str, str]) -> tuple[str, Decimal]:
+    number = Decimal(item["number"])
+    unit = item["unit"]
+    conversions: dict[str, tuple[str, Decimal]] = {
+        "mm": ("length", Decimal("1")),
+        "cm": ("length", Decimal("10")),
+        "m": ("length", Decimal("1000")),
+        "km": ("length", Decimal("1000000")),
+        "mm²": ("area", Decimal("1")),
+        "cm²": ("area", Decimal("100")),
+        "m²": ("area", Decimal("1000000")),
+        "mm³": ("volume", Decimal("1")),
+        "cm³": ("volume", Decimal("1000")),
+        "m³": ("volume", Decimal("1000000000")),
+        "Pa": ("pressure", Decimal("1")),
+        "kPa": ("pressure", Decimal("1000")),
+        "MPa": ("pressure", Decimal("1000000")),
+        "GPa": ("pressure", Decimal("1000000000")),
+        "N": ("force", Decimal("1")),
+        "kN": ("force", Decimal("1000")),
+        "mg": ("mass", Decimal("0.001")),
+        "g": ("mass", Decimal("1")),
+        "kg": ("mass", Decimal("1000")),
+        "t": ("mass", Decimal("1000000")),
+    }
+    family, factor = conversions.get(unit, (unit, Decimal("1")))
+    return family, number * factor
+
+
+def _posco_quantities_missing_from_kcs(
+    posco_quantities: list[dict[str, str]],
+    kcs_quantities: list[dict[str, str]],
+) -> bool:
+    """Check only requirements that would be lost by deleting the POSCO clause."""
+
+    kcs_values = {_canonical_quantity(item) for item in kcs_quantities}
+    return any(_canonical_quantity(item) not in kcs_values for item in posco_quantities)
+
+
 def analyze_text_differences(posco_text: str, kcs_text: str) -> dict[str, list]:
     """Compare review-sensitive quantities and normative expressions."""
 
@@ -106,10 +182,15 @@ def analyze_text_differences(posco_text: str, kcs_text: str) -> dict[str, list]:
     kcs = _clean(kcs_text)
     warnings: list[str] = []
     differences: list[dict[str, object]] = []
+    comparable_topic = _has_topic_overlap(posco, kcs)
 
     posco_quantities = _quantities(posco)
     kcs_quantities = _quantities(kcs)
-    if posco_quantities != kcs_quantities:
+    if (
+        comparable_topic
+        and posco_quantities
+        and _posco_quantities_missing_from_kcs(posco_quantities, kcs_quantities)
+    ):
         warnings.append("수치·단위가 다르므로 기술 검토가 필요합니다.")
         differences.append(
             {"category": "quantity", "posco": posco_quantities, "kcs": kcs_quantities}
@@ -117,13 +198,13 @@ def analyze_text_differences(posco_text: str, kcs_text: str) -> dict[str, list]:
 
     posco_limits = _matches(_LIMIT_RE, posco)
     kcs_limits = _matches(_LIMIT_RE, kcs)
-    if posco_limits != kcs_limits:
+    if comparable_topic and posco_limits and set(posco_limits) != set(kcs_limits):
         warnings.append("이상·이하·초과·미만 표현이 다릅니다.")
         differences.append({"category": "limit", "posco": posco_limits, "kcs": kcs_limits})
 
     posco_prohibitions = _matches(_PROHIBITION_RE, posco)
     kcs_prohibitions = _matches(_PROHIBITION_RE, kcs)
-    if bool(posco_prohibitions) != bool(kcs_prohibitions):
+    if comparable_topic and bool(posco_prohibitions) and not bool(kcs_prohibitions):
         warnings.append("금지 표현의 유무가 다릅니다.")
         differences.append(
             {
@@ -135,7 +216,7 @@ def analyze_text_differences(posco_text: str, kcs_text: str) -> dict[str, list]:
 
     posco_obligations = _matches(_OBLIGATION_RE, posco)
     kcs_obligations = _matches(_OBLIGATION_RE, kcs)
-    if bool(posco_obligations) != bool(kcs_obligations):
+    if comparable_topic and bool(posco_obligations) and not bool(kcs_obligations):
         warnings.append("의무 표현의 유무가 다릅니다.")
         differences.append(
             {"category": "obligation", "posco": posco_obligations, "kcs": kcs_obligations}

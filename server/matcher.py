@@ -941,7 +941,7 @@ def _rerank_with_embeddings(
     ranked: list[tuple[dict[str, Any], float]],
     ai_client: OpenAIClient | None,
 ) -> list[tuple[dict[str, Any], float, float | None]]:
-    local = [(section, score, None) for section, score in ranked]
+    local = _rank_without_embeddings(ranked)
     if (
         not ranked
         or ai_client is None
@@ -957,11 +957,42 @@ def _rerank_with_embeddings(
     return _rerank_from_scores(ranked, semantic_scores)
 
 
+def _final_rank_score(
+    section: dict[str, Any],
+    relevance_score: float,
+    *,
+    embeddings_used: bool,
+) -> float:
+    """Return the same calibrated score used for both ordering and display."""
+
+    priority_weight = 0.15 if embeddings_used else 0.08
+    base_weight = 0.85 if embeddings_used else 1.0
+    score = (
+        base_weight * relevance_score
+        + priority_weight * float(section.get("_retrieval_priority", 0.0))
+        + (0.16 if section.get("_keyword_scope") else 0.0)
+        + (0.2 if section.get("_equivalent_scope") else 0.0)
+        + (1.0 if section.get("_explicit_reference") else 0.0)
+    )
+    return max(0.0, min(1.0, score))
+
+
+def _rank_without_embeddings(
+    ranked: list[tuple[dict[str, Any], float]],
+) -> list[tuple[dict[str, Any], float, float | None]]:
+    calibrated = [
+        (section, _final_rank_score(section, score, embeddings_used=False), None)
+        for section, score in ranked
+    ]
+    calibrated.sort(key=lambda item: (-item[1], _section_key(item[0])))
+    return calibrated
+
+
 def _rerank_from_scores(
     ranked: list[tuple[dict[str, Any], float]],
     semantic_scores: list[float],
 ) -> list[tuple[dict[str, Any], float, float | None]]:
-    local = [(section, score, None) for section, score in ranked]
+    local = _rank_without_embeddings(ranked)
     if len(semantic_scores) != len(ranked):
         return local
     enriched = []
@@ -974,16 +1005,11 @@ def _rerank_from_scores(
             effective_score = combined_score
         else:
             effective_score = local_score
-        enriched.append((section, effective_score, semantic_score))
+        final_score = _final_rank_score(section, effective_score, embeddings_used=True)
+        enriched.append((section, final_score, semantic_score))
     enriched.sort(
         key=lambda item: (
-            -(
-                0.85 * item[1]
-                + 0.15 * float(item[0].get("_retrieval_priority", 0.0))
-                + (0.16 if item[0].get("_keyword_scope") else 0.0)
-                + (0.2 if item[0].get("_equivalent_scope") else 0.0)
-                + (1.0 if item[0].get("_explicit_reference") else 0.0)
-            ),
+            -item[1],
             -(item[2] or 0.0),
         )
     )
@@ -1013,7 +1039,7 @@ def _candidate_rows(
     ranked: list[tuple[dict[str, Any], float, float | None]],
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str]] = set()
     reserved: list[tuple[dict[str, Any], float, float | None]] = []
     reserved_codes: set[str] = set()
     for item in ranked:
@@ -1039,7 +1065,10 @@ def _candidate_rows(
             continue
         if score < 0.25 and not explicit_reference:
             continue
-        key = (section["code"], section["clause"], section["content"])
+        clause_key = normalize_key(section.get("clause"))
+        if not clause_key:
+            clause_key = normalize_key(f"{section.get('title', '')} {section.get('content', '')}")
+        key = (_code_digits(section["code"]), clause_key)
         if key in seen:
             continue
         seen.add(key)
@@ -1172,9 +1201,7 @@ def match_clauses(
     for index, (clause, source_text, local_ranked) in enumerate(prepared):
         if batch_scores is not None:
             ranked = _rerank_from_scores(local_ranked, batch_scores[index]) \
-                if index in batch_scores else [
-                    (section, score, None) for section, score in local_ranked
-                ]
+                if index in batch_scores else _rank_without_embeddings(local_ranked)
         elif require_embeddings:
             embedding_method = getattr(ai_client, "embedding_scores", None)
             if not callable(embedding_method):
