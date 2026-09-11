@@ -632,7 +632,13 @@ class OpenAIClient:
             "required": source_ids,
         }
         schema["properties"].pop("coverage_status")
-        schema["required"] = ["confidence", "requirements_by_source", "residual_content", "rationale"]
+        # Decide coverage before writing the residual, not the reverse. Structured
+        # output follows property order; residual-first caused contradictory saves.
+        schema["properties"] = {
+            key: schema["properties"][key]
+            for key in ("requirements_by_source", "confidence", "rationale", "residual_content")
+        }
+        schema["required"] = list(schema["properties"])
         if not reference_ids:
             item_schema["properties"]["status"] = {"type": "string", "enum": ["uncertain"]}
         candidate_text = "\n\n".join(
@@ -684,6 +690,12 @@ class OpenAIClient:
                     + STANDARD_COMPARISON_RULES
                     + "간접 KS 연계의 같은 용도·적합 요구는 evidence에 기록한다. "
                     "완전 대체 확인이 남은 구간은 uncertain으로 두고 원문을 보존한다. "
+                    "verified_standard_links가 비어 있고 현재 원문에 KS 참조가 없다면 KS 간접 참조의 "
+                    "불확실성을 해당 원문에 추가하지 않는다. requirements_by_source를 먼저 확정한 뒤 "
+                    "residual_content를 작성한다. 모든 구간이 covered이면 residual_content는 반드시 "
+                    "빈 문자열이다. 하나의 후보가 원문 전체를 포괄하면 다른 후보가 일부만 대응해도 "
+                    "그 이유로 원문을 남기지 않는다. 미포괄·충돌·불확실 구간이 있을 때만 해당 내용을 "
+                    "residual_content에 보존하고, 판정 설명이나 검토 메모는 rationale에만 쓴다. "
                 ),
                 "input": (
                     f"{context_section}[판정 대상 포스코 원문 구간]\n{segmented_posco_text}"

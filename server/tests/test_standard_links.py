@@ -62,6 +62,10 @@ def test_indirect_scope_is_not_full_coverage_even_when_model_says_covered(explic
     def handler(request):
         payload = json.loads(request.content)
         assert "verified_standard_links" in payload["input"]
+        properties = list(payload["text"]["format"]["schema"]["properties"])
+        assert properties[0] == "requirements_by_source"
+        assert properties[-1] == "residual_content"
+        assert "모든 구간이 covered이면 residual_content는 반드시" in payload["instructions"]
         response = {"confidence": .98, "requirements_by_source": {"S1": {
             "status": "covered", "evidence_candidate_ids": ["C1"], "evidence": target}},
             "residual_content": "", "rationale": "같은 적합 요구"}
