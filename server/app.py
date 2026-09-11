@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from .backups import BackupError, BackupManager, BackupNotFoundError
 from .config import get_settings
-from . import detailed_analysis
+from . import detailed_analysis, ks_test_comparison
 from .relevance import own_requirement
 from .standard_links import standard_links
 from .related_references import find_related_references
@@ -1474,7 +1474,23 @@ def get_clause(project_id: str, clause_id: str):
         for candidate in clause.get("candidates", [])
         for link in standard_links(own_requirement(clause), candidate["content"])
     ]
+    clause["ks_test_comparison"] = ks_test_comparison.read_saved(store, clause)
     return {"clause": clause}
+
+
+@app.post("/api/projects/{project_id}/clauses/{clause_id}/ks-test-comparison")
+async def compare_ks_test(project_id: str, clause_id: str, payload: CandidateAnalysisRequest | None = None):
+    _allow_detailed_analysis(project_id)
+    async with _coverage_request_lock:
+        clause = store.get_clause(project_id, clause_id)
+        if not clause:
+            raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
+        try:
+            result = await asyncio.to_thread(ks_test_comparison.compare, store, ai_client, clause,
+                                             refresh=bool(payload and payload.refresh))
+        except (ValueError, OpenAIAPIError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"comparison": result}
 
 
 @app.get("/api/projects/{project_id}/clauses/{clause_id}/table-comparison")
@@ -1656,7 +1672,16 @@ def pause_detailed_analysis(project_id: str):
 
 async def _automatic_coverage(project_id: str, clause_id: str):
     async with _coverage_request_lock:
-        return await _analyze_clause_coverage(project_id, clause_id, automatic=True)
+        result = await _analyze_clause_coverage(project_id, clause_id, automatic=True)
+        clause = store.get_clause(project_id, clause_id)
+        if clause and ks_test_comparison.fields_for(clause):
+            # KS advice does not modify KCS coverage, choices, edited text, or export.
+            # Failures remain retryable in the KS panel and do not discard KCS work.
+            try:
+                await asyncio.to_thread(ks_test_comparison.compare, store, ai_client, clause)
+            except (ValueError, OpenAIAPIError):
+                logger.warning("KS test comparison incomplete for clause %s", clause_id)
+        return result
 
 
 @app.post("/api/projects/{project_id}/clauses/{clause_id}/coverage-analysis")

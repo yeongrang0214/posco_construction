@@ -324,6 +324,7 @@ export interface ClauseDetail extends ClauseSummary {
   excluded_candidates?: Candidate[];
   coverage_analysis?: ClauseCoverageAnalysis | null;
   quality_evaluation?: QualityItem | null;
+  ks_test_comparison?: KsTestComparison;
   standard_links?: {
     candidate_id: string;
     standard: string;
@@ -339,6 +340,28 @@ export interface ClauseDetail extends ClauseSummary {
     kcs_clause: string;
     kcs_requirement: string;
     comparison_note: string;
+  }[];
+}
+
+export interface KsTestComparison {
+  applicable: boolean;
+  status?: 'pending' | 'completed';
+  stale?: boolean;
+  checked_at?: string;
+  model?: string;
+  notice?: string;
+  warning?: string;
+  suggested_text?: string;
+  fields?: {
+    id: string; label: string; source: string;
+    status?: 'corresponds' | 'differs' | 'unconfirmed';
+    explanation?: string;
+    evidence?: { standard: string; section: string; quote: string }[];
+  }[];
+  standards?: {
+    standard: string; name: string; edition_date: string; checked_at: string;
+    status: 'machine_verified' | 'viewer_only' | 'unavailable';
+    message: string; source_url: string;
   }[];
 }
 
@@ -639,6 +662,10 @@ export const api = {
     request<{ clause: ClauseDetail }>(`/api/projects/${projectId}/clauses/${clauseId}`),
   tableComparison: (projectId: string, clauseId: string) =>
     request<TableComparison>(`/api/projects/${projectId}/clauses/${clauseId}/table-comparison`),
+  compareKsTest: (projectId: string, clauseId: string) =>
+    request<{ comparison: KsTestComparison }>(`/api/projects/${projectId}/clauses/${clauseId}/ks-test-comparison`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh: true }),
+    }),
   relatedReferences: (projectId: string, clauseId: string, signal?: AbortSignal) =>
     request<RelatedReferences>(`/api/projects/${projectId}/clauses/${clauseId}/related-references`, { signal }),
   quickReviewClause: (

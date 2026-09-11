@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api, ClauseCoverageAnalysis, ClauseDetail } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { KsTestComparisonPanel } from '@/components/ks-test-comparison-panel';
 
 const labels = {
   fully_covered: 'GPT: 전체 요구사항 대응',
@@ -16,13 +17,13 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
   projectId: string; clauseId: string; refreshKey: number | string; onOpenDetail: () => void;
 }) {
   const requestKey = `${projectId}:${clauseId}:${refreshKey}`;
-  const [result, setResult] = useState<{ key: string; loading: boolean; error?: string; analysis?: ClauseCoverageAnalysis | null; standardLinks?: ClauseDetail['standard_links'] }>({ key: '', loading: true });
+  const [result, setResult] = useState<{ key: string; loading: boolean; error?: string; analysis?: ClauseCoverageAnalysis | null; standardLinks?: ClauseDetail['standard_links']; ksTestComparison?: ClauseDetail['ks_test_comparison'] }>({ key: '', loading: true });
   const state: typeof result = result.key === requestKey ? result : { key: requestKey, loading: true };
   useEffect(() => {
     let active = true;
     // Paid work belongs to the durable document queue; this panel only reads saved results.
     api.clause(projectId, clauseId).then(({ clause }) => {
-      if (active) setResult({ key: requestKey, loading: false, analysis: clause.coverage_analysis, standardLinks: clause.standard_links });
+      if (active) setResult({ key: requestKey, loading: false, analysis: clause.coverage_analysis, standardLinks: clause.standard_links, ksTestComparison: clause.ks_test_comparison });
     }).catch(() => {
       if (active) setResult({ key: requestKey, loading: false, error: '저장된 GPT 검증 결과를 불러오지 못했습니다.' });
     });
@@ -52,6 +53,7 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
         </div>)}
       </details>
     </div>}
+    {!state.loading && state.ksTestComparison?.applicable && <KsTestComparisonPanel key={requestKey} projectId={projectId} clauseId={clauseId} initial={state.ksTestComparison} />}
     {!state.loading && state.analysis && <details className="mt-2">
       <summary className="cursor-pointer font-medium">검증 근거 · 원문 {state.analysis.requirements.length}구간</summary>
       <p className="mt-2 whitespace-pre-wrap">{state.analysis.rationale}</p>
