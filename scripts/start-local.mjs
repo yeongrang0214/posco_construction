@@ -38,7 +38,7 @@ const children = [
   spawn(process.execPath, [vinextCli, 'dev'], { cwd: root, stdio: 'inherit' }),
 ];
 
-console.log('\n포스코 시방서 정합성 검토');
+console.log('\n시방서 AI 분석 시스템');
 console.log('화면: http://localhost:3000');
 console.log('분석 API: http://127.0.0.1:8000\n');
 

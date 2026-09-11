@@ -709,7 +709,7 @@ function UploadPanel({
               <Layers3 className="size-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">시방서 정합성 검토</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">시방서 AI 분석 시스템</h1>
               <p className="text-sm text-muted-foreground">포스코 고유기준을 최신 KCS와 분리합니다.</p>
             </div>
           </div>
@@ -2452,7 +2452,7 @@ export function SpecReviewApp() {
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground"><Layers3 className="size-5" /></div>
             <div className="min-w-0">
-              <p className="truncate text-lg font-semibold tracking-tight">시방서 정합성 검토</p>
+              <p className="truncate text-lg font-semibold tracking-tight">시방서 AI 분석 시스템</p>
               <p className="truncate text-xs text-muted-foreground">포스코 고유기준 선별 · 최신 KCS 기준</p>
             </div>
           </div>

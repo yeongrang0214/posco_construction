@@ -111,7 +111,7 @@ async def _app_lifespan(_application: FastAPI):
         await _stop_kcs_rematches()
 
 app = FastAPI(
-    title="포스코 시방서 정합성 검토 API",
+    title="시방서 AI 분석 시스템 API",
     version="0.1.0",
     description="포스코 시방서와 최신 KCS의 검토 후보 및 담당자 판정을 관리합니다.",
     lifespan=_app_lifespan,
