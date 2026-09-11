@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { Crosshair, FileText, Minus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -89,7 +89,7 @@ function PdfSourceDocument({ projectId, clauses, activeClauseId, onSelectClause 
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let loadingTask: ReturnType<typeof import('pdfjs-dist')['getDocument']> | undefined;
+    let loadingTask: ReturnType<typeof import('pdfjs-dist/legacy/build/pdf.mjs')['getDocument']> | undefined;
     const started = Date.now();
     const poll = async () => {
       try {
@@ -102,11 +102,12 @@ function PdfSourceDocument({ projectId, clauses, activeClauseId, onSelectClause 
           timer = setTimeout(() => void poll(), 2000);
           return;
         }
-        const pdfjs = await import('pdfjs-dist');
+        const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
         if (controller.signal.aborted) return;
-        // Serve the unmodified, matching-version worker: Vite's dynamic-import
-        // transform otherwise injects its window-only client into this worker.
-        pdfjs.GlobalWorkerOptions.workerSrc = `/pdfjs/${pdfjs.version}/pdf.worker.min.mjs`;
+        // Both realms need the legacy build's polyfills (e.g. Uint8Array.toHex).
+        // A distinct URL avoids reusing a cached modern worker. Keep this asset
+        // outside Vite's window-only JS/HMR transformations.
+        pdfjs.GlobalWorkerOptions.workerSrc = `/pdfjs/${pdfjs.version}/legacy/pdf.worker.min.mjs`;
         loadingTask = pdfjs.getDocument({ url: api.projectSourcePdfUrl(projectId) });
         const document = await loadingTask.promise;
         if (controller.signal.aborted) { void loadingTask.destroy(); return; }
