@@ -501,8 +501,6 @@ class OpenAIClient:
         candidates: Sequence[tuple[str, str]],
         posco_context: str = "",
     ) -> CoverageAnalysis:
-        if not candidates:
-            raise OpenAIAPIError("전체 포괄 분석에 사용할 KCS 후보가 없습니다.")
         reference_ids = [reference_id for reference_id, _ in candidates]
         if len(reference_ids) != len(set(reference_ids)):
             raise OpenAIAPIError("KCS 후보 참조 ID가 중복되었습니다.")
@@ -512,7 +510,7 @@ class OpenAIClient:
             for index, (source_text, _) in enumerate(source_pieces, start=1)
         )
         source_batches = _coverage_source_batches(source_segments)
-        candidate_packs = _coverage_candidate_packs(candidates)
+        candidate_packs = _coverage_candidate_packs(candidates) or ((),)
         call_count = len(source_batches) * len(candidate_packs)
         if call_count > MAX_COVERAGE_CALLS:
             raise ValueError(
@@ -590,7 +588,8 @@ class OpenAIClient:
                             "status": {"type": "string", "enum": list(REQUIREMENT_STATUSES)},
                             "evidence_candidate_ids": {
                                 "type": "array",
-                                "items": {"type": "string", "enum": reference_ids},
+                                "items": {"type": "string", **({"enum": reference_ids} if reference_ids else {})},
+                                **({"maxItems": 0} if not reference_ids else {}),
                             },
                             "evidence": {"type": "string"},
                         },
@@ -624,6 +623,8 @@ class OpenAIClient:
         }
         schema["properties"].pop("coverage_status")
         schema["required"] = ["confidence", "requirements_by_source", "residual_content", "rationale"]
+        if not reference_ids:
+            item_schema["properties"]["status"] = {"type": "string", "enum": ["uncertain"]}
         candidate_text = "\n\n".join(
             f"[KCS 후보 {label}]\n{text}"
             for _, label, text in candidate_chunks
@@ -641,6 +642,9 @@ class OpenAIClient:
                 "store": False,
                 "max_output_tokens": 5000,
                 "instructions": (
+                    "KCS 후보가 제공되지 않았다면 원문의 요구사항만 분석하고 각 status를 uncertain으로 "
+                    "반환한다. KCS가 없거나 회사 고유기준이라고 단정하지 말고, 근거를 만들거나 "
+                    "후보 ID를 추측하지 않는다. 이때 원문은 residual_content에 그대로 보존한다. "
                     "당신은 건설 시방서 검토 전문가다. S1, S2처럼 고정된 포스코 원문 구간을 "
                     "독립적인 기술 요구사항으로 분석하고, 제시된 최신 KCS 후보들을 개별 및 조합으로 "
                     "대조한다. requirements_by_source의 각 S#에 해당 원문의 결과를 반환한다. "
@@ -722,6 +726,7 @@ class OpenAIClient:
             if (
                 source_id not in allowed_source_ids
                 or status not in REQUIREMENT_STATUSES
+                or (not reference_ids and status != "uncertain")
                 or not set(evidence_ids).issubset(allowed_references)
                 or (status == "covered" and not evidence_ids)
                 or (evidence_ids and not evidence)

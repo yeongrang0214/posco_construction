@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .backups import BackupError, BackupManager, BackupNotFoundError
 from .config import get_settings
+from . import detailed_analysis
 from .relevance import own_requirement
 from .related_references import find_related_references
 from .documents import (
@@ -77,6 +78,9 @@ _upload_worker_task: asyncio.Task[None] | None = None
 _upload_wakeup: asyncio.Event | None = None
 _upload_shutdown_requested = False
 _mutation_request_lock = asyncio.Lock()
+_coverage_request_lock = asyncio.Lock()
+_detail_worker: detailed_analysis.DetailedAnalysisWorker | None = None
+_detail_worker_task: asyncio.Task | None = None
 
 
 def _read_current_kcs_target() -> tuple[str, str, dict]:
@@ -102,13 +106,21 @@ except (RuntimeError, ValueError):
 
 @asynccontextmanager
 async def _app_lifespan(_application: FastAPI):
+    global _detail_worker, _detail_worker_task
     await _resume_kcs_rematches()
     await _resume_upload_jobs()
+    _detail_worker = detailed_analysis.DetailedAnalysisWorker(store, _automatic_coverage, _allow_detailed_analysis)
+    _detail_worker_task = asyncio.create_task(_detail_worker.run())
     try:
         yield
     finally:
         await _stop_upload_jobs()
         await _stop_kcs_rematches()
+        _detail_worker.stopping = True
+        # Let an in-flight request save its result before shutdown, avoiding repeat charges.
+        await _detail_worker_task
+        _detail_worker = None
+        _detail_worker_task = None
 
 app = FastAPI(
     title="시방서 AI 분석 시스템 API",
@@ -301,6 +313,8 @@ def _backup_manager() -> BackupManager:
 
 
 def _ensure_backup_maintenance_idle() -> None:
+    if detailed_analysis.active_count(store) or (_detail_worker and _detail_worker.in_flight):
+        raise HTTPException(status_code=409, detail="GPT 상세비교가 진행 중입니다. 완료하거나 일시정지한 뒤 다시 시도해 주세요.")
     active_uploads = store.active_upload_item_count()
     active_rematches = store.active_kcs_rematch_count()
     if active_uploads or active_rematches:
@@ -523,6 +537,9 @@ def _execute_kcs_rematch(run_id: str) -> None:
             clauses,
             matcher_signature,
         )
+        if worker_client.available:
+            previous_analysis = detailed_analysis.status(store, run["project_id"])
+            detailed_analysis.enqueue(store, run["project_id"], retry=not (previous_analysis and previous_analysis["status"] == "paused"))
     except Exception as exc:
         if expected_state_sha256:
             try:
@@ -687,6 +704,8 @@ def _process_uploaded_source(
                 "parser_version": CURRENT_PARSER_VERSION,
             }
             store.create_project(project, clauses)
+            if client.available:
+                detailed_analysis.enqueue(store, project_id)
         return project
     finally:
         if converted_path:
@@ -1586,21 +1605,58 @@ def quick_review_clause(project_id: str, clause_id: str, payload: QuickReviewUpd
     return {"clause": clause, "project": _public_project(store.get_project(project_id))}
 
 
+def _allow_detailed_analysis(project_id: str):
+    project = _project_or_404(project_id)
+    _ensure_project_review_unlocked(project)
+    if project.get("archived_at"):
+        raise HTTPException(status_code=409, detail="보관된 문서는 GPT 자동 분석을 진행하지 않습니다.")
+    if not ai_client.available:
+        raise HTTPException(status_code=503, detail="GPT 상세비교에 사용할 OpenAI API 연결을 확인해 주세요.")
+
+
+@app.get("/api/projects/{project_id}/detailed-analysis")
+def get_detailed_analysis(project_id: str):
+    _project_or_404(project_id)
+    return {"job": detailed_analysis.status(store, project_id)}
+
+
+@app.post("/api/projects/{project_id}/detailed-analysis")
+def start_detailed_analysis(project_id: str, payload: CandidateAnalysisRequest | None = None):
+    _allow_detailed_analysis(project_id)
+    return {"job": detailed_analysis.enqueue(store, project_id, retry=bool(payload and payload.refresh))}
+
+
+@app.post("/api/projects/{project_id}/detailed-analysis/pause")
+def pause_detailed_analysis(project_id: str):
+    _project_or_404(project_id)
+    return {"job": detailed_analysis.pause(store, project_id)}
+
+
+async def _automatic_coverage(project_id: str, clause_id: str):
+    async with _coverage_request_lock:
+        return await _analyze_clause_coverage(project_id, clause_id, automatic=True)
+
+
 @app.post("/api/projects/{project_id}/clauses/{clause_id}/coverage-analysis")
-async def analyze_clause_coverage(
+async def analyze_clause_coverage(project_id: str, clause_id: str, payload: CandidateAnalysisRequest | None = None):
+    async with _coverage_request_lock:
+        return await _analyze_clause_coverage(project_id, clause_id, payload)
+
+
+async def _analyze_clause_coverage(
     project_id: str,
     clause_id: str,
     payload: CandidateAnalysisRequest | None = None,
+    *, automatic: bool = False,
 ):
-    _ensure_project_review_unlocked(_project_or_404(project_id))
+    analysis_project = _project_or_404(project_id)
+    _ensure_project_review_unlocked(analysis_project)
     context = store.get_coverage_context(project_id, clause_id)
     if not context:
         raise HTTPException(status_code=404, detail="분석할 포스코 조항을 찾을 수 없습니다.")
     if context["source_type"] == "heading":
         raise HTTPException(status_code=400, detail="목차와 구조 제목은 전체 포괄 분석 대상이 아닙니다.")
     candidates = context["candidates"]
-    if not candidates:
-        raise HTTPException(status_code=400, detail="전체 포괄 분석에 사용할 KCS 후보가 없습니다.")
     if context.get("coverage_analysis") and not (payload and payload.refresh):
         return {
             "analysis": context["coverage_analysis"],
@@ -1672,6 +1728,8 @@ async def analyze_clause_coverage(
             result.model,
             expected_posco_text=posco_text,
             expected_candidate_texts=[text for _, text in candidate_inputs],
+            expected_kcs_revision=analysis_project.get("kcs_revision"),
+            preserve_review=automatic,
         )
     except ReviewWorkflowConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

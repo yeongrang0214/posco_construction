@@ -58,6 +58,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { BackupManager } from '@/components/backup-manager';
 import { BulkReview } from '@/components/bulk-review';
+import { DocumentAnalysisStatus } from '@/components/document-analysis-status';
 import { RelatedReferencesPanel } from '@/components/related-references';
 import {
   api,
@@ -963,6 +964,17 @@ export function SpecReviewApp() {
   const [startingKcsRematch, setStartingKcsRematch] = useState(false);
   const [kcsRematchPollError, setKcsRematchPollError] = useState('');
   const [detailRefreshKey, setDetailRefreshKey] = useState(0);
+  const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (!project?.id || !detail?.id || !analysisRefreshKey) return;
+    let active = true;
+    const clauseId = detail.id;
+    api.clause(project.id, clauseId).then(({ clause }) => {
+      if (active) setDetail(current => current?.id === clauseId ? { ...current, coverage_analysis: clause.coverage_analysis } : current);
+    }).catch(() => { /* The analysis status control exposes connection failures. */ });
+    return () => { active = false; };
+  }, [project?.id, detail?.id, analysisRefreshKey]);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const uploading = startingUploadJob || Boolean(uploadJob && (uploadJob.status === 'queued' || uploadJob.status === 'running'));
@@ -2401,19 +2413,6 @@ export function SpecReviewApp() {
   const documentDownloadBlockMessage = artifactDownloadBlocked
     ? artifactDownloadBlockMessage
     : '삭제로 확정되지 않은 조항이 있어야 간소화 DOCX를 만들 수 있습니다.';
-  const finalDownloadBlockers = Array.from(new Set([
-    ...(project?.final_export_blockers || []),
-    ...(!config?.kcs_available ? ['최신 KCS 상태를 먼저 확인하세요.'] : []),
-    ...(kcsRematchActive ? ['KCS 영향 분석과 자동 재매칭이 진행 중입니다.'] : []),
-    ...(kcsRematch?.status === 'failed' ? ['KCS 자동 재매칭 실패 항목을 다시 처리하세요.'] : []),
-    ...(kcsRematch?.status === 'superseded' ? ['더 최신 KCS 기준으로 자동 재매칭을 다시 실행하세요.'] : []),
-    ...(unacknowledgedKcsImpactCount ? [`KCS 개정 영향 조항 ${unacknowledgedKcsImpactCount}건을 재검토하세요.`] : []),
-    ...(dirty ? ['현재 조항의 변경사항을 먼저 저장하세요.'] : []),
-    ...(qualityDraftDirty ? ['품질평가 변경사항을 먼저 저장하세요.'] : []),
-    ...(detailMutationBusy ? ['현재 조항의 저장·구조 편집·GPT 분석·후보 복원이 끝난 뒤 내려받으세요.'] : []),
-    ...(bulkSaving ? ['일괄 저장이 끝난 뒤 내려받으세요.'] : []),
-    ...(syncingKcs ? ['KCS 갱신이 끝난 뒤 내려받으세요.'] : []),
-  ]));
   const qualityInsights = qualityEvaluation?.insights || null;
   const qualityErrorSignals = qualityInsights?.error_signals || null;
   const qualityCohortRows = normalizeInsightRows(qualityInsights?.cohorts ?? qualityInsights?.cohort_rows, 'cohort');
@@ -2496,13 +2495,20 @@ export function SpecReviewApp() {
             {documentDownloadReady ? (
               <a className={buttonVariants()} href={api.exportUrl(project.id, documentDownloadKind)} title="남김·보류·미검토 조항 포함, 삭제 조항 제외"><Download />간소화 DOCX</a>
             ) : (
-              <Button disabled aria-describedby="document-download-status" title={documentDownloadBlockMessage}><Download />간소화 DOCX</Button>
+              <Button disabled title={documentDownloadBlockMessage}><Download />간소화 DOCX</Button>
             )}
           </div>
         </div>
       </header>
 
       <section className="mx-auto max-w-[1700px] px-4 py-5 lg:px-7">
+        {reviewMode === 'business' && <DocumentAnalysisStatus
+          key={project.id}
+          projectId={project.id}
+          revision={`${project.kcs_revision}:${bulkRefreshKey}`}
+          enabled={Boolean(config?.openai_available) && !reviewMutationLocked}
+          onUpdated={() => setAnalysisRefreshKey(value => value + 1)}
+        />}
         {error && (
           <Alert variant="destructive" className="fixed right-4 top-20 z-50 max-w-lg shadow-xl">
             <AlertTriangle /><AlertTitle>처리 중 오류가 발생했습니다</AlertTitle><AlertDescription className="pr-7">{error}</AlertDescription>
@@ -2511,36 +2517,6 @@ export function SpecReviewApp() {
         )}
         {notice && (
           <Alert className="mb-4"><CheckCircle2 /><AlertTitle>처리 완료</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert>
-        )}
-        {!finalDownloadReady && (
-          <Alert className="mb-4">
-            <AlertTriangle />
-            <AlertTitle>{documentDownloadReady ? '간소화 DOCX를 내려받을 수 있습니다' : 'DOCX 생성 전 확인이 필요합니다'}</AlertTitle>
-            <AlertDescription id="document-download-status" className="space-y-3">
-              {documentDownloadReady ? (
-                <p>
-                  현재 남김 {project.keep_count}건, 보류 {project.hold_count}건, 미검토 {project.unreviewed_clauses}건이 포함되고 삭제 {project.delete_count}건은 제외됩니다.
-                  {' '}이후 판정과 승인이 변경되면 같은 버튼의 파일에도 반영됩니다.
-                </p>
-              ) : (
-                <p>{documentDownloadBlockMessage}</p>
-              )}
-              <p>
-                <strong>검토 완료까지 남은 단계:</strong>{' '}
-                {(finalDownloadBlockers.length
-                  ? finalDownloadBlockers
-                  : ['최종 출력 조건을 아직 충족하지 않았습니다.']).join(' · ')}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {project.review_submission_ready && ['reviewing', 'changes_requested'].includes(project.status) && (
-                  <Button size="sm" onClick={() => openReviewWorkflow('submit')} disabled={reviewWorkflowBusy || artifactDownloadBlocked}><Send />검토 제출</Button>
-                )}
-                {project.status === 'submitted' && (
-                  <Button size="sm" onClick={() => openReviewWorkflow('decision')} disabled={reviewWorkflowBusy || artifactDownloadBlocked}><ShieldCheck />승인 처리</Button>
-                )}
-              </div>
-            </AlertDescription>
-          </Alert>
         )}
         {project.status === 'submitted' && latestReviewSubmission && (
           <Alert className="mb-4">
@@ -2570,9 +2546,6 @@ export function SpecReviewApp() {
             </AlertDescription>
           </Alert>
         )}
-        {project.warning && (
-          <Alert className="mb-4"><AlertTriangle /><AlertTitle>문서 구조 확인 필요</AlertTitle><AlertDescription>{project.warning}</AlertDescription></Alert>
-        )}
         {project.requires_source_reupload && (
           <Alert variant="destructive" className="mb-4">
             <AlertTriangle />
@@ -2587,9 +2560,9 @@ export function SpecReviewApp() {
             </AlertDescription>
           </Alert>
         )}
-        {kcsRematch && (
+        {kcsRematch && kcsRematch.status !== 'completed' && (
           <Alert variant={kcsRematch.status === 'failed' || kcsRematch.status === 'superseded' ? 'destructive' : 'default'} className="mb-4">
-            {kcsRematch.status === 'completed' && kcsRematch.unacknowledged_count === 0 ? <CheckCircle2 /> : <RefreshCw />}
+            <RefreshCw />
             <AlertTitle>{kcsRematchLabel(kcsRematch, unacknowledgedKcsImpactCount)}</AlertTitle>
             <AlertDescription>
               <div className="space-y-3">
@@ -2805,6 +2778,7 @@ export function SpecReviewApp() {
           <BulkReview
             key={project.id}
             projectId={project.id}
+            analysisRefreshKey={analysisRefreshKey}
             refreshKey={bulkRefreshKey}
             onSaved={handleBulkSaved}
             onBusyChange={handleBulkBusyChange}
@@ -3125,7 +3099,7 @@ export function SpecReviewApp() {
                     )}
                   </section>
                 )}
-                {reviewMode === 'business' && detail.source_type !== 'heading' && detail.candidates.length > 0 && (
+                {reviewMode === 'business' && detail.source_type !== 'heading' && (
                   <section className="mb-4 rounded-lg border border-primary/25 bg-primary/5 p-4" aria-labelledby="coverage-analysis-title" aria-busy={analyzingCoverage}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>

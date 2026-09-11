@@ -428,6 +428,16 @@ export interface ProjectPayload {
   clauses: ClauseSummary[];
 }
 
+export interface DetailedAnalysisJob {
+  project_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
+  total: number;
+  completed: number;
+  error: string;
+  current_clause_id: string | null;
+  updated_at: string;
+}
+
 export type UploadJobStatus = 'queued' | 'running' | 'completed' | 'failed';
 export type UploadJobPhase = 'queued' | 'preparing' | 'converting' | 'parsing' | 'matching' | 'saving' | 'completed' | 'failed';
 
@@ -681,6 +691,14 @@ export const api = {
         body: JSON.stringify({ refresh }),
       },
     ),
+  detailedAnalysis: (projectId: string) =>
+    request<{ job: DetailedAnalysisJob | null }>(`/api/projects/${projectId}/detailed-analysis`),
+  startDetailedAnalysis: (projectId: string, retry = false) =>
+    request<{ job: DetailedAnalysisJob }>(`/api/projects/${projectId}/detailed-analysis`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh: retry }),
+    }),
+  pauseDetailedAnalysis: (projectId: string) =>
+    request<{ job: DetailedAnalysisJob | null }>(`/api/projects/${projectId}/detailed-analysis/pause`, { method: 'POST' }),
   restoreCandidate: (projectId: string, clauseId: string, candidateId: string) =>
     request<{ clause: ClauseDetail; project: Project }>(
       `/api/projects/${projectId}/clauses/${clauseId}/candidates/${candidateId}/ai-analysis`,

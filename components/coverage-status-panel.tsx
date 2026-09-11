@@ -13,14 +13,14 @@ const labels = {
 };
 
 export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDetail }: {
-  projectId: string; clauseId: string; refreshKey: number; onOpenDetail: () => void;
+  projectId: string; clauseId: string; refreshKey: number | string; onOpenDetail: () => void;
 }) {
   const requestKey = `${projectId}:${clauseId}:${refreshKey}`;
   const [result, setResult] = useState<{ key: string; loading: boolean; error?: string; analysis?: ClauseCoverageAnalysis | null }>({ key: '', loading: true });
   const state: typeof result = result.key === requestKey ? result : { key: requestKey, loading: true };
   useEffect(() => {
     let active = true;
-    // Read saved analysis only. Navigation must never trigger paid GPT requests.
+    // Paid work belongs to the durable document queue; this panel only reads saved results.
     api.clause(projectId, clauseId).then(({ clause }) => {
       if (active) setResult({ key: requestKey, loading: false, analysis: clause.coverage_analysis });
     }).catch(() => {
@@ -29,7 +29,7 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
     return () => { active = false; };
   }, [projectId, clauseId, requestKey]);
 
-  return <section className="mb-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-xs leading-5" aria-label="GPT 전체 요구사항 검증" aria-live="polite">
+  return <section className="mb-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm leading-6" aria-label="GPT 전체 요구사항 검증" aria-live="polite">
     <div className="flex items-start justify-between gap-2">
       <div>
         <p className="font-semibold">{state.loading ? 'GPT 검증 상태 확인 중…' : state.error || (state.analysis ? labels[state.analysis.coverage_status] : 'GPT 전체 요구사항 검증 전')}</p>

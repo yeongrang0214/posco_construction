@@ -5649,6 +5649,8 @@ class Store:
         *,
         expected_posco_text: str | None = None,
         expected_candidate_texts: list[str] | None = None,
+        expected_kcs_revision: str | None = None,
+        preserve_review: bool = False,
     ) -> dict[str, Any] | None:
         coverage_status = str(analysis.get("coverage_status", ""))
         if coverage_status not in COVERAGE_STATUSES:
@@ -5712,7 +5714,16 @@ class Store:
         analyzed_at = datetime.now(timezone.utc).isoformat()
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            self._assert_review_editable(connection, project_id)
+            project = self._assert_review_editable(connection, project_id)
+            if expected_kcs_revision is not None:
+                current_revision = connection.execute("SELECT value FROM app_metadata WHERE key = 'current_kcs_revision'").fetchone()
+                active_rematch = connection.execute(
+                    "SELECT 1 FROM kcs_rematch_runs WHERE project_id = ? AND status IN ('pending', 'running') LIMIT 1", (project_id,),
+                ).fetchone()
+                if (project['kcs_revision'] != expected_kcs_revision
+                    or (current_revision and current_revision['value'] != expected_kcs_revision)
+                    or active_rematch):
+                    raise ReviewWorkflowConflictError("GPT 분석 중 KCS 기준이 변경되었습니다. 최신 후보로 다시 분석해 주세요.")
             clause = connection.execute(
                 "SELECT * FROM clauses WHERE id = ? AND project_id = ?",
                 (clause_id, project_id),
@@ -5851,7 +5862,7 @@ class Store:
                     analyzed_at,
                 ),
             )
-            if bool(clause["coverage_confirmed"]):
+            if bool(clause["coverage_confirmed"]) and not preserve_review:
                 connection.execute(
                     "UPDATE clauses SET coverage_confirmed = 0 WHERE id = ? AND project_id = ?",
                     (clause_id, project_id),

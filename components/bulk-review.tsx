@@ -169,6 +169,7 @@ function differenceTokens(text: string, counterpart: string, tone: 'source' | 'k
 export function BulkReview({
   projectId,
   refreshKey,
+  analysisRefreshKey = 0,
   onSaved,
   onBusyChange,
   onOpenDetail,
@@ -180,6 +181,7 @@ export function BulkReview({
 }: {
   projectId: string;
   refreshKey: number;
+  analysisRefreshKey?: number;
   onSaved: (clause: ClauseDetail, project: Project) => void;
   onBusyChange: (busy: boolean) => void;
   onOpenDetail: (clauseId: string) => void;
@@ -692,7 +694,7 @@ export function BulkReview({
                   />
 
                   <section className="min-h-0 overflow-auto rounded-xl border border-border bg-card p-3 shadow-sm" aria-label="KCS 후보 비교">
-                    {item.source_type !== 'heading' && <CoverageStatusPanel key={`${projectId}:${item.id}`} projectId={projectId} clauseId={item.id} refreshKey={refreshKey} onOpenDetail={() => onOpenDetail(item.id)} />}
+                    {item.source_type !== 'heading' && <CoverageStatusPanel key={`${projectId}:${item.id}`} projectId={projectId} clauseId={item.id} refreshKey={`${refreshKey}:${analysisRefreshKey}`} onOpenDetail={() => onOpenDetail(item.id)} />}
                     <TableComparisonPanel projectId={projectId} clauseId={item.id} enabled={item.source_type === 'table'}
                       selectedId={item.selected_candidate_id} disabled={rowDecisionBusy || item.decision === 'delete' || reason === 'no_kcs_match'}
                       onSelect={(candidateId) => selectCandidate(item, candidateId)} fallback={<>

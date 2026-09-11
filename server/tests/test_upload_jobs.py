@@ -510,6 +510,7 @@ def test_legacy_single_upload_contract_remains_synchronous(upload_api):
     assert controls["match_calls"][-1][3] is False
 
     project_id = response.json()["project"]["id"]
+    assert client.get(f"/api/projects/{project_id}/detailed-analysis").json()["job"]["total"] == 1
     assert client.get("/api/projects", params={"search": "single"}).json()[
         "projects"
     ][0]["id"] == project_id
