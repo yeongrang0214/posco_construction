@@ -324,6 +324,22 @@ export interface ClauseDetail extends ClauseSummary {
   excluded_candidates?: Candidate[];
   coverage_analysis?: ClauseCoverageAnalysis | null;
   quality_evaluation?: QualityItem | null;
+  standard_links?: {
+    candidate_id: string;
+    standard: string;
+    name: string;
+    status: string;
+    verified_at: string;
+    scope: string;
+    source_url: string;
+    verification_level: string;
+    reference_type: 'explicit' | 'indirect';
+    kcs_code: string;
+    kcs_title: string;
+    kcs_clause: string;
+    kcs_requirement: string;
+    comparison_note: string;
+  }[];
 }
 
 export interface QualityCounts {

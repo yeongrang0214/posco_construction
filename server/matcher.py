@@ -14,6 +14,7 @@ from typing import Any
 from . import text_analysis
 from .relevance import apply_verdicts, clearly_unrelated, own_requirement, query_text, contextual_requirement, masonry_material_conflict
 from .table_evidence import table_candidates
+from .standard_links import standard_links
 from .kcs_sync import (
     catalog_revision,
     raw_section_is_usable,
@@ -24,7 +25,7 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
-CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.4-material-context"
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.5-ks-scope-link"
 
 
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
@@ -56,6 +57,7 @@ STOPWORDS = {
     "그리고", "또는", "위하여", "필요", "적용", "기준", "해당",
 }
 TERM_EQUIVALENT_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("내화몰탈", "내화 모르타르", "내화 모르터", "refractory mortar"),
     ("공작도", "철골제작도", "제작도", "시공상세도", "shop drawing", "shopdrawing"),
     ("철골세우기", "철골 설치", "강구조 설치", "steel erection", "erection"),
     ("고장력볼트", "고력볼트", "high strength bolt"),
@@ -374,6 +376,15 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
                 display_parts.append(f"[다음 조항] {next_content}")
             search_content = clean_space(" ".join(context_parts))
             display_content = "\n".join(display_parts)
+            standard_context = []
+            if re.search(r"한국\s*산업\s*표준.*적합", content):
+                # Preserve the same subsection's qualifications/table for indirect KS review.
+                # They are not substituted into the indexed requirement or other subsections.
+                for next_item, next_title, following in usable_items[item_index + 1:item_index + 3]:
+                    if next_title != title:
+                        break
+                    if following and normalize_key(following) != normalize_key(next_title):
+                        standard_context.append(f"[같은 절의 추가 조건 · {next_item.get('label', '')}] {following}")
             sections.append(
                 {
                     "code": format_kcs_code(code),
@@ -385,6 +396,7 @@ def load_kcs_sections(raw_dir_text: str, prefixes: tuple[str, ...]) -> tuple[dic
                     "content": content,
                     "search_content": search_content,
                     "display_content": display_content,
+                    "standard_context": "\n".join(standard_context),
                     "context_dependent": context_dependent,
                     "forward_dependent": forward_dependent,
                     "context_resolved": context_resolved,
@@ -1093,7 +1105,12 @@ def _candidate_rows(
             continue
         seen.add(key)
         candidate_content = section.get("display_content") or section["content"]
+        if standard_links(own_requirement(clause), section["content"]) and section.get("standard_context"):
+            candidate_content += "\n" + section["standard_context"]
         reasons, warnings = _comparison_metadata(own_requirement(clause) or source_text, candidate_content)
+        for link in standard_links(own_requirement(clause), candidate_content):
+            reasons.append(f"KS 적용 범위 연계: {link['standard']} {link['name']} — {link['comparison_note']}")
+            warnings.append("KS 간접 참조는 전체 포괄 증명이 아닙니다. 적용 재료·등급·시험 조건은 별도 확인하세요.")
         if section.get("context_resolved"):
             if section.get("forward_dependent"):
                 reasons.append("참조 표현의 인접 조항을 함께 비교했습니다.")

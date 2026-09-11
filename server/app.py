@@ -24,6 +24,7 @@ from .backups import BackupError, BackupManager, BackupNotFoundError
 from .config import get_settings
 from . import detailed_analysis
 from .relevance import own_requirement
+from .standard_links import standard_links
 from .related_references import find_related_references
 from .documents import (
     build_audit_xlsx,
@@ -1452,6 +1453,12 @@ def get_clause(project_id: str, clause_id: str):
     clause = store.get_clause(project_id, clause_id)
     if not clause:
         raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
+    clause["standard_links"] = [
+        {"candidate_id": candidate["id"], "kcs_code": candidate["kcs_code"],
+         "kcs_title": candidate["title"], "kcs_clause": candidate["kcs_clause"], **link}
+        for candidate in clause.get("candidates", [])
+        for link in standard_links(own_requirement(clause), candidate["content"])
+    ]
     return {"clause": clause}
 
 
