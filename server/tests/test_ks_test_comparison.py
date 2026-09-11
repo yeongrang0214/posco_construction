@@ -203,3 +203,30 @@ def test_archived_document_cannot_start_paid_comparison(setup):
     response = TestClient(app_module.app).post(f"/api/projects/{clause['project_id']}/clauses/{clause['id']}/ks-test-comparison")
     assert response.status_code == 409
     assert ai.calls == 0
+
+
+@pytest.mark.parametrize("source", ["시험소요일 10일", "공사개시전 1회", "10,000매당 5매", "1급 압축강도 100kg/㎠ 이상"])
+def test_generic_ks_quality_evidence_cannot_cover_specific_conditions(setup, source):
+    _, _, ai = setup
+    # Simulate a false-positive GPT label using a real but irrelevant quote.
+    ai.modify = lambda rows: [{**r, "status": "corresponds"} for r in rows]
+    result = ks.analyze_fields(ai, [{"id": "conditions", "label": "등급·합격기준", "source": source}], [standard("KS L 4201", None)])
+    assert result[0]["status"] == "unconfirmed"
+
+
+def test_contradictory_explanation_cannot_mark_condition_covered(setup):
+    _, _, ai = setup
+    ai.modify = lambda rows: [{**r, "status": "corresponds", "explanation": "품질증명서 제출은 KS 본문에 없으나 시험 기준은 있다."} for r in rows]
+    result = ks.analyze_fields(ai, [{"id": "frequency", "label": "빈도", "source": "품질증명서 제출"}], [standard("KS L 4201", None)])
+    assert result[0]["status"] == "unconfirmed"
+
+
+def test_parent_test_title_is_context_not_standalone_evidence():
+    data = machine_data()
+    data["content"].extend([
+        {"NUMBERING": "7.4", "CONTENT": "", "TITLE_NUMBERING": "<h3>흡수율</h3>"},
+        {"NUMBERING": "7.4.1", "CONTENT": "<p>시험용 조작 본문</p>", "TITLE_NUMBERING": "<h4>조작</h4>"},
+    ])
+    sections = ks.parse_machine(standard("KS L 4201", None), data)
+    assert not any(s["section"] == "7.4" for s in sections)
+    assert sections[-1]["title_path"] == "흡수율 > 조작"
