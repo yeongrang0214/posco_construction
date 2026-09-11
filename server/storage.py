@@ -4426,6 +4426,19 @@ class Store:
                 "next_cursor": next_cursor,
             }
 
+    def set_project_title(self, project_id: str, title: str) -> dict[str, Any] | None:
+        title = title.strip()
+        if not title or len(title) > 200:
+            raise ValueError("문서명은 1~200자로 입력해 주세요.")
+        # A display-name change must not reparse sources or reset any review.
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE projects SET title = ? WHERE id = ?", (title, project_id)
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_project(project_id)
+
     def set_project_archived(
         self,
         project_id: str,

@@ -234,6 +234,10 @@ class ProjectArchiveUpdate(BaseModel):
     archived: bool
 
 
+class ProjectTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ReviewSubmitRequest(BaseModel):
     author_name: str = Field(min_length=1, max_length=100)
     note: str = Field(default="", max_length=5000)
@@ -1368,6 +1372,17 @@ def request_review_changes(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     project = store.get_project(project_id)
     return {"project": _public_project(project), "workflow": workflow}
+
+
+@app.patch("/api/projects/{project_id}/title")
+async def update_project_title(project_id: str, payload: ProjectTitleUpdate):
+    try:
+        project = await asyncio.to_thread(store.set_project_title, project_id, payload.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not project:
+        raise HTTPException(status_code=404, detail="검토 프로젝트를 찾을 수 없습니다.")
+    return {"project": _public_project(project)}
 
 
 @app.put("/api/projects/{project_id}/archive")
