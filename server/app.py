@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from .backups import BackupError, BackupManager, BackupNotFoundError
 from .config import get_settings
 from .relevance import own_requirement
+from .related_references import find_related_references
 from .documents import (
     build_audit_xlsx,
     build_quality_evaluation_xlsx,
@@ -1443,6 +1444,22 @@ def get_table_comparison(project_id: str, clause_id: str):
         raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
     prefixes = tuple(dict.fromkeys(a + b for a, b in re.findall(r"KCS\s*(\d{2})\s*(\d{2})", project.get("kcs_scope") or "")))
     return compare_table(clause, settings, prefixes or ("",))
+
+
+@app.get("/api/projects/{project_id}/clauses/{clause_id}/related-references")
+def get_related_references(project_id: str, clause_id: str):
+    project = _project_or_404(project_id)
+    clause = store.get_clause(project_id, clause_id)
+    if not clause:
+        raise HTTPException(status_code=404, detail="조항을 찾을 수 없습니다.")
+    try:
+        with kcs_read_lock(timeout=0.5):
+            return find_related_references(
+                clause, settings.kcs_raw_dir,
+                f"{project.get('title', '')} {project.get('source_filename', '')}",
+            )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="참고용 KCS 원문을 조회하지 못했습니다. 잠시 후 다시 시도하세요.") from exc
 
 
 @app.post("/api/projects/{project_id}/clauses/merge")

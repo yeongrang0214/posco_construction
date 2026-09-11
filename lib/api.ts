@@ -294,6 +294,26 @@ export interface TableComparison {
   notice?: string;
 }
 
+export interface RelatedReferences {
+  applicable: boolean;
+  search_scope: string;
+  notice: string;
+  references: {
+    id: string;
+    usage: 'reference_only';
+    deletion_eligible: false;
+    kcs_code: string;
+    document_name: string;
+    version: string;
+    update_date: string;
+    title: string;
+    kcs_clause: string;
+    content: string;
+    comparison_note: string;
+    scope_note: string;
+  }[];
+}
+
 export interface ClauseDetail extends ClauseSummary {
   project_id: string;
   content: string;
@@ -593,6 +613,8 @@ export const api = {
     request<{ clause: ClauseDetail }>(`/api/projects/${projectId}/clauses/${clauseId}`),
   tableComparison: (projectId: string, clauseId: string) =>
     request<TableComparison>(`/api/projects/${projectId}/clauses/${clauseId}/table-comparison`),
+  relatedReferences: (projectId: string, clauseId: string, signal?: AbortSignal) =>
+    request<RelatedReferences>(`/api/projects/${projectId}/clauses/${clauseId}/related-references`, { signal }),
   quickReviewClause: (
     projectId: string,
     clauseId: string,

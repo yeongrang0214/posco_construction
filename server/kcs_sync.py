@@ -77,9 +77,11 @@ def _now_seoul() -> str:
 
 
 @contextmanager
-def kcs_read_lock():
+def kcs_read_lock(*, timeout: float | None = None):
     """Keep one upload's snapshot read and matching pass consistent with KCS sync."""
-    SYNC_LOCK.acquire()
+    acquired = SYNC_LOCK.acquire() if timeout is None else SYNC_LOCK.acquire(timeout=timeout)
+    if not acquired:
+        raise RuntimeError("KCS 자료를 다른 작업에서 사용 중입니다.")
     try:
         yield
     finally:

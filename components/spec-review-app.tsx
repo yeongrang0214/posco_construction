@@ -58,6 +58,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { BackupManager } from '@/components/backup-manager';
 import { BulkReview } from '@/components/bulk-review';
+import { RelatedReferencesPanel } from '@/components/related-references';
 import {
   api,
   BulkReviewItem,
@@ -3210,7 +3211,7 @@ export function SpecReviewApp() {
                 )}
                 {detail.candidates.length === 0 ? (
                   <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-muted/30 p-8 text-center">
-                    <div><FileText className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="font-medium">적절한 KCS 후보가 없습니다</p><p className="mt-2 text-sm text-muted-foreground">유사도 25% 미만 후보는 숨기되, 포스코 원문에 KCS 코드가 명시된 경우에는 확인용 후보로 표시합니다. 포스코 고유기준 여부를 검토하세요.</p></div>
+                    <div><FileText className="mx-auto mb-3 size-8 text-muted-foreground" /><p className="font-medium">직접 대응하는 KCS 후보를 확인하지 못했습니다</p><p className="mt-2 text-sm text-muted-foreground">KCS에 관련 내용 자체가 없거나 포스코 고유기준이라는 확정은 아닙니다. 아래 참고 조항이 있으면 적용 범위와 미확인 요구를 함께 살펴보세요.</p></div>
                   </div>
                 ) : (
                   <>
@@ -3219,6 +3220,7 @@ export function SpecReviewApp() {
                         대응 KCS 없음으로 판정 중입니다. 후보는 비교용으로만 표시되며 판정 근거로 선택되지 않습니다.
                       </p>
                     )}
+                    <p className="mb-2 text-sm font-semibold">KCS 대응 검토 후보 · 전체 포괄 여부 별도 확인</p>
                     <Tabs value={candidateTab} onValueChange={setCandidateTab}>
                     <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${detail.candidates.length}, minmax(0, 1fr))` }}>
                       {detail.candidates.map((candidate) => <TabsTrigger key={candidate.id} value={candidate.id}>후보 {candidate.rank} · {percent(candidate.score)}</TabsTrigger>)}
@@ -3262,6 +3264,7 @@ export function SpecReviewApp() {
                     </Tabs>
                   </>
                 )}
+                {reviewMode === 'business' && detail.source_type === 'paragraph' && <RelatedReferencesPanel key={`${project.id}:${detail.id}`} projectId={project.id} clauseId={detail.id} />}
                 {reviewMode === 'business' && Boolean(detail.excluded_candidates?.length) && (
                   <details className="mt-4 rounded-lg border border-border bg-muted/30 p-4">
                     <summary className="cursor-pointer text-sm font-medium">

@@ -22,6 +22,7 @@ import {
 import { PdfSourceViewer as DocxSourceViewer } from '@/components/pdf-source-viewer';
 import { TableComparisonPanel } from '@/components/table-comparison';
 import { CoverageStatusPanel } from '@/components/coverage-status-panel';
+import { RelatedReferencesPanel } from '@/components/related-references';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -697,8 +698,8 @@ export function BulkReview({
                       onSelect={(candidateId) => selectCandidate(item, candidateId)} fallback={<>
                     <div className="mb-3 flex items-start justify-between gap-2 border-b border-border pb-2">
                       <div>
-                        <p className="text-sm font-semibold">KCS 후보 · 최대 3개</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">본문 후보를 선택하면 아래에 문장 차이가 표시됩니다.</p>
+                        <p className="text-sm font-semibold">KCS 대응 검토 후보 · 최대 3개</p>
+                        <p className="mt-0.5 text-sm text-muted-foreground">후보는 삭제 확정 근거가 아닙니다. 원문 요구의 전체 포괄 여부를 확인하세요.</p>
                       </div>
                       <Badge variant="outline">{candidates.length}개</Badge>
                     </div>
@@ -735,9 +736,11 @@ export function BulkReview({
                       <div className="grid min-h-36 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-4 text-center text-sm leading-6 text-muted-foreground">
                         {item.excluded_candidate_count > 0
                           ? `관련성 낮음으로 제외된 후보 ${item.excluded_candidate_count}개가 있습니다.`
-                          : '대응하는 KCS 본문 후보를 확인하지 못했습니다. 담당자 판단으로 남김·삭제·보류할 수 있습니다.'}
+                          : '직접 대응하는 KCS 본문 후보를 확인하지 못했습니다. KCS에 관련 내용 자체가 없다는 뜻은 아닙니다.'}
                       </div>
                     )}
+
+                    {item.source_type === 'paragraph' && <RelatedReferencesPanel projectId={projectId} clauseId={item.id} refreshKey={refreshKey} />}
 
                     <div className="mt-3 rounded-xl border border-border bg-muted/25 p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
@@ -917,9 +920,10 @@ export function BulkReview({
                           ? '문서 구조 제목이라 KCS 매칭 대상에서 제외했습니다.'
                           : item.excluded_candidate_count > 0
                             ? `관련성 낮음으로 제외된 후보 ${item.excluded_candidate_count}개가 있습니다. 상세 비교에서 제외 근거를 확인할 수 있습니다.`
-                            : '대응하는 KCS 본문 후보를 확인하지 못했습니다.'}
+                            : '직접 대응 후보 미확인 · 관련 내용 자체가 없다는 뜻은 아닙니다. 펼치기 또는 상세 비교에서 참고 조항을 확인하세요.'}
                       </div>
                     )}
+                    {expanded && item.source_type === 'paragraph' && <RelatedReferencesPanel projectId={projectId} clauseId={item.id} refreshKey={refreshKey} />}
                   </section>
 
                   <section className="min-w-0 rounded-lg border border-border p-3">
