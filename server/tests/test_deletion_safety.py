@@ -141,7 +141,8 @@ def test_decision_reason_heading_and_delete_gate(tmp_path):
     assert project["review_submission_ready"] is True
 
 
-def test_non_kcs_delete_does_not_require_a_candidate(tmp_path):
+@pytest.mark.parametrize("candidate_id", [None, "safe-candidate", "warning-candidate"])
+def test_non_kcs_delete_retains_optional_reference_without_confirming_coverage(tmp_path, candidate_id):
     store, project_id = _store_with_project(tmp_path)
 
     saved = store.update_decision(
@@ -150,14 +151,14 @@ def test_non_kcs_delete_does_not_require_a_candidate(tmp_path):
         "delete",
         "",
         "사내 시방서의 다른 조항과 중복됨",
-        "safe-candidate",
+        candidate_id,
         decision_reason="internal_duplicate",
         coverage_confirmed=True,
     )
 
     assert saved is not None
     assert saved["decision_reason"] == "internal_duplicate"
-    assert saved["selected_candidate_id"] is None
+    assert saved["selected_candidate_id"] == candidate_id
     assert saved["coverage_confirmed"] is False
     project = store.get_project(project_id)
     assert project is not None

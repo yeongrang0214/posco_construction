@@ -531,7 +531,6 @@ export function BulkReview({
       decision: 'delete',
       decision_reason: reason,
       coverage_confirmed: kcsBasedDelete,
-      ...(kcsBasedDelete ? {} : { selected_candidate_id: null }),
       ...kcsImpactAcknowledgement(item),
     });
   }

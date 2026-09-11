@@ -455,6 +455,52 @@ def test_quick_review_merges_only_fields_actually_sent(bulk_client):
     assert clear_decision.json()["clause"]["edited_content"] == "다른 탭에서 저장한 최신 수정문"
 
 
+@pytest.mark.parametrize("quick", [True, False])
+def test_delete_keeps_selected_evidence_when_reopening_clause(bulk_client, quick):
+    client, test_store, project_id = bulk_client
+    clause_id = "unreviewed-match"
+    candidate_id = f"{clause_id}-candidate-1"
+    base = f"/api/projects/{project_id}/clauses/{clause_id}"
+    assert client.patch(
+        f"{base}/quick-review", json={"selected_candidate_id": candidate_id}
+    ).status_code == 200
+
+    payload = {
+        "decision": "delete",
+        "decision_reason": "management_decision",
+        "coverage_confirmed": False,
+    }
+    if not quick:
+        payload.update(selected_candidate_id=candidate_id, edited_content="", review_note="")
+    response = client.patch(f"{base}/quick-review" if quick else base, json=payload)
+    assert response.status_code == 200
+
+    # Revisit through both views and reopen the database (not just React state).
+    saved = response.json()["clause"]
+    detail = client.get(base).json()["clause"]
+    rows = client.get(f"/api/projects/{project_id}/bulk-review").json()["items"]
+    row = next(item for item in rows if item["id"] == clause_id)
+    reopened = Store(test_store.database_path).get_clause(project_id, clause_id)
+    for clause in (saved, detail, row, reopened):
+        assert clause["decision"] == "delete"
+        assert clause["decision_reason"] == "management_decision"
+        assert clause["selected_candidate_id"] == candidate_id
+        assert clause["coverage_confirmed"] is False
+        assert clause["review_note"] == ""
+    with test_store.connect() as connection:
+        history = connection.execute(
+            "SELECT * FROM decision_history WHERE clause_id = ? ORDER BY id DESC LIMIT 1",
+            (clause_id,),
+        ).fetchone()
+    assert history["selected_candidate_id"] == candidate_id
+    assert history["coverage_confirmed"] == 0
+
+    # Explicit deselection still works; preserving a reference is not a KCS approval.
+    cleared = client.patch(f"{base}/quick-review", json={"selected_candidate_id": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["clause"]["selected_candidate_id"] is None
+
+
 def test_quick_review_rejects_empty_invalid_and_missing_targets(bulk_client):
     client, _, project_id = bulk_client
     base = f"/api/projects/{project_id}/clauses/unreviewed-match/quick-review"

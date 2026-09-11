@@ -1237,7 +1237,9 @@ export function SpecReviewApp() {
         setCoverageConfirmed(Boolean(clause.coverage_confirmed));
         setStandardsConfirmed(false);
         setSelectedCandidateId(clause.selected_candidate_id);
-        const preferredCandidateId = qualityItem?.relevant_candidate_id;
+        const preferredCandidateId = reviewMode === 'business'
+          ? clause.selected_candidate_id
+          : qualityItem?.relevant_candidate_id;
         setCandidateTab(
           preferredCandidateId && clause.candidates.some((candidate) => candidate.id === preferredCandidateId)
             ? preferredCandidateId
@@ -1833,9 +1835,7 @@ export function SpecReviewApp() {
         review_note: nextReviewNote,
         decision_reason: nextReason,
         coverage_confirmed: nextCoverageConfirmed,
-        selected_candidate_id: (nextDecision === 'delete' && !kcsBasedDelete) || noKcsMatch
-          ? null
-          : selectedCandidateId,
+        selected_candidate_id: noKcsMatch ? null : selectedCandidateId,
         ...(acknowledgeImpact ? kcsImpactAcknowledgement(detail) : {}),
       });
       if (
