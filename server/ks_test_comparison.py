@@ -15,9 +15,9 @@ import httpx
 from lxml import html, etree
 
 from .openai_ai import OpenAIAPIError, _response_output_text
-from .standard_links import ks_codes, KS_RE
+from .standard_links import ks_codes, ks_references
 
-VERSION = "ks-test-v2"
+VERSION = "ks-test-v3-source-context"
 BASE = "https://standard.go.kr/KSCI"
 NOTICE = "KS 시험방법과 현장 시험 빈도·채취 수량·등급은 별개입니다. 이 비교는 검토 제안이며 남김·삭제 및 DOCX 내용을 자동 변경하지 않습니다."
 
@@ -28,7 +28,8 @@ def compact(value):
 
 def fingerprint(clause):
     return hashlib.sha256(json.dumps(
-        [VERSION, clause.get("source_type"), clause.get("content"), clause.get("edited_content")],
+        [VERSION, clause.get("source_type"), clause.get("content"), clause.get("edited_content"),
+         clause.get("resolved_table_cells"), clause.get("table_standard_notation")],
         ensure_ascii=False,
     ).encode()).hexdigest()
 
@@ -36,15 +37,16 @@ def fingerprint(clause):
 def fields_for(clause):
     # Do not infer fixed columns in arbitrary tables. Require the recognisable
     # five-column test row with the KS code in its specification column.
-    cells = [compact(x) for x in str(clause.get("content") or "").split("|")]
-    if clause.get("source_type") != "table" or len(cells) != 5 or not ks_codes(cells[2]):
+    cells = clause.get("resolved_table_cells") or [compact(x) for x in str(clause.get("content") or "").split("|")]
+    notation = clause.get("table_standard_notation") or (cells[2] if len(cells) == 5 else "")
+    if clause.get("source_type") != "table" or len(cells) not in {4, 5} or not ks_codes(notation):
         return []
     if not re.search(r"시험|강도|치수|내화|내 화|규격|흡", cells[1]):
         return []
     return [{"id": key, "label": label, "source": cells[index]}
             for key, label, index in [("tests", "시험 항목·방법", 1),
-                                      ("frequency", "현장 빈도·채취 수량", 3),
-                                      ("conditions", "등급·합격기준·기타 조건", 4)]
+                                      ("frequency", "현장 빈도·채취 수량", 3 if len(cells) == 5 else 2),
+                                      ("conditions", "등급·합격기준·기타 조건", 4 if len(cells) == 5 else 3)]
             if cells[index]]
 
 
@@ -233,9 +235,9 @@ def compare(store, ai, clause, *, refresh=False):
     if not cached["applicable"] or (cached.get("status") == "completed" and not refresh and not cached.get("stale")):
         return cached
     fields = fields_for(clause)
-    code_cell = str(clause["content"]).split("|")[2]
-    codes = sorted(ks_codes(code_cell))
-    ambiguous_codes = bool(re.search(r"\d", KS_RE.sub("", code_cell)))
+    code_cell = clause.get("table_standard_notation") or str(clause["content"]).split("|")[2]
+    codes, ambiguous_codes = ks_references(code_cell)
+    codes = sorted(codes)
     if len(codes) > 6:
         raise ValueError("한 시험표 행의 KS 규격이 너무 많습니다. 행을 나누어 검토해 주세요.")
     with httpx.Client(timeout=20, follow_redirects=True) as client:

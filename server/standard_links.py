@@ -35,7 +35,28 @@ STANDARD_COMPARISON_RULES = (
 
 
 def ks_codes(text: str) -> set[str]:
-    return {f"KS {m[0].upper()} {m[1]}" for m in KS_RE.findall(text)}
+    return set(ks_references(text)[0])
+
+
+def ks_references(text: str) -> tuple[list[str], bool]:
+    """Expand unambiguous omitted prefixes, never a part/year/range suffix."""
+    pattern = re.compile(r"(?<![A-Za-z0-9])KS\s*([A-Z])\s*[-_]?\s*(ISO\s*)?(\d{3,})(?![A-Za-z0-9])", re.I)
+    codes, ambiguous = [], False
+    matches = list(pattern.finditer(text))
+    for index, match in enumerate(matches):
+        prefix = f"KS {match[1].upper()} " + ("ISO " if match[2] else "")
+        codes.append(prefix + match[3])
+        tail = text[match.end():matches[index + 1].start() if index + 1 < len(matches) else len(text)]
+        # ISO 5019-1~6 or 3101 -5 needs verification; do not guess its parts.
+        if re.match(r"\s*[-~～:]\s*\d", tail):
+            ambiguous = True
+            # Skip only the ambiguous short suffix so later explicit 4-digit
+            # standard numbers (3111, 3113) remain discoverable.
+            tail = re.sub(r"^\s*[-~～:]\s*\d{1,2}(?:\s*[~～-]\s*\d{1,2})?", "", tail)
+        while follow := re.match(r"^\s*(?:[,，、]\s*|\s+)(\d{4})(?![\dA-Za-z])", tail):
+            codes.append(prefix + follow[1])
+            tail = tail[follow.end():]
+    return list(dict.fromkeys(codes)), ambiguous
 
 
 def standard_links(source: str, target: str) -> list[dict]:

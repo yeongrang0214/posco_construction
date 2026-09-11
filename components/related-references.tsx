@@ -22,7 +22,7 @@ export function RelatedReferencesPanel({ projectId, clauseId, refreshKey = 0 }: 
     return () => controller.abort();
   }, [projectId, clauseId, key]);
   const current = result?.key === key ? result : null;
-  if (!current) return <p role="status" className="my-3 text-sm text-muted-foreground">참고용 관련 조항 확인 중…</p>;
+  if (!current) return <output className="my-3 block text-sm text-muted-foreground">참고용 관련 조항 확인 중…</output>;
   if (current.error) return <div role="alert" className="my-3 rounded-lg border p-3 text-sm">
     <p>참고용 관련 조항을 불러오지 못했습니다. 기준이 없다는 뜻은 아닙니다.</p>
     <Button variant="outline" size="sm" className="mt-2" onClick={() => setRetry((value) => value + 1)}><RefreshCw />다시 조회</Button>

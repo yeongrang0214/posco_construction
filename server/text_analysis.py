@@ -9,12 +9,12 @@ _LATIN_UNIT = (
     r"(?:GPa|MPa|kPa|Pa|kN|N|mg|kg|g|t|km|"
     r"mm(?:2|3|²|³)?|cm(?:2|3|²|³)?|m(?:2|3|²|³)?|°C)"
 )
-_SYMBOL_UNIT = r"(?:㎜|㎝|㎞|㎟|㎠|㎡|㎥|㎎|㎏|℃|%|시간|분|초|일|회|개)"
+_SYMBOL_UNIT = r"(?:㎜|㎝|㎞|㎟|㎠|㎡|㎥|㎎|㎏|℃|%|시간|분|초|일|회|개|켜|매)"
 _QUANTITY_RE = re.compile(
     rf"(?P<number>{_NUMBER})\s*(?P<unit>{_LATIN_UNIT}(?![A-Za-z])|{_SYMBOL_UNIT})",
     re.IGNORECASE,
 )
-_KOREAN_WORD_UNITS = {"시간", "분", "초", "일", "회", "개"}
+_KOREAN_WORD_UNITS = {"시간", "분", "초", "일", "회", "개", "켜", "매"}
 _QUANTITY_SUFFIX_RE = re.compile(
     r"^(?:이상|이하|초과|미만|동안|개월|으로|에서|마다|당|씩|간|월|차|"
     r"을|를|이|가|은|는|의|에|로|[,.;:)\]])"

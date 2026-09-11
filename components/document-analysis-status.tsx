@@ -8,39 +8,38 @@ import { Spinner } from '@/components/ui/spinner';
 export function DocumentAnalysisStatus({ projectId, revision, enabled, onUpdated }: {
   projectId: string; revision: string; enabled: boolean; onUpdated: () => void;
 }) {
-  const [job, setJob] = useState<DetailedAnalysisJob | null>(null);
-  const [error, setError] = useState('');
+  const [response, setResponse] = useState<{ key: string; job: DetailedAnalysisJob | null; error: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const requestKey = `${projectId}:${revision}:${enabled}:${attempt}`;
+  const job = response?.key === requestKey ? response.job : null;
+  const error = response?.key === requestKey ? response.error : '';
   const updated = useRef(onUpdated);
-  updated.current = onUpdated;
+  useEffect(() => { updated.current = onUpdated; }, [onUpdated]);
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     let previous = '';
-    setJob(null);
-    setError('');
     async function poll(start = false) {
       try {
         const response = start && enabled
           ? await api.startDetailedAnalysis(projectId)
           : await api.detailedAnalysis(projectId);
         if (!active) return;
-        setJob(response.job);
-        setError('');
+        setResponse({ key: requestKey, job: response.job, error: '' });
         const key = `${response.job?.completed}:${response.job?.status}`;
         if (key !== previous) { previous = key; updated.current(); }
         if (response.job && ['queued', 'running'].includes(response.job.status)) timer = setTimeout(() => void poll(), 4000);
       } catch (cause) {
         if (!active) return;
-        setError(cause instanceof Error ? cause.message : 'GPT 상세비교 상태를 확인하지 못했습니다.');
+        setResponse({ key: requestKey, job: null, error: cause instanceof Error ? cause.message : 'GPT 상세비교 상태를 확인하지 못했습니다.' });
         // Never repeat a POST automatically after an uncertain response.
         if (!start) timer = setTimeout(() => void poll(), 10000);
       }
     }
     void poll(true);
     return () => { active = false; clearTimeout(timer); };
-  }, [projectId, revision, enabled, attempt]);
+  }, [projectId, enabled, requestKey]);
 
   const running = job && ['queued', 'running'].includes(job.status);
   async function control() {
@@ -49,7 +48,7 @@ export function DocumentAnalysisStatus({ projectId, revision, enabled, onUpdated
       if (running) await api.pauseDetailedAnalysis(projectId);
       else await api.startDetailedAnalysis(projectId, true);
       setAttempt(value => value + 1);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '분석 상태를 변경하지 못했습니다.'); }
+    } catch (cause) { setResponse({ key: requestKey, job, error: cause instanceof Error ? cause.message : '분석 상태를 변경하지 못했습니다.' }); }
     finally { setBusy(false); }
   }
   return <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" aria-live="polite">

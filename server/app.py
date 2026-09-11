@@ -1672,7 +1672,13 @@ def pause_detailed_analysis(project_id: str):
 
 async def _automatic_coverage(project_id: str, clause_id: str):
     async with _coverage_request_lock:
-        result = await _analyze_clause_coverage(project_id, clause_id, automatic=True)
+        from .openai_ai import COVERAGE_ANALYSIS_VERSION
+        current = store.get_clause(project_id, clause_id)
+        cached = (current or {}).get("coverage_analysis") or {}
+        result = await _analyze_clause_coverage(
+            project_id, clause_id, CandidateAnalysisRequest(refresh=cached.get("analysis_version") != COVERAGE_ANALYSIS_VERSION),
+            automatic=True,
+        )
         clause = store.get_clause(project_id, clause_id)
         if clause and ks_test_comparison.fields_for(clause):
             # KS advice does not modify KCS coverage, choices, edited text, or export.
@@ -1725,6 +1731,7 @@ async def _analyze_clause_coverage(
             str(context.get("posco_label") or "").strip(),
             str(context.get("posco_title") or "").strip(),
             str(context.get("match_context") or "").strip(),
+            str(context.get("analysis_context") or "").strip(),
         )
         if part
     )

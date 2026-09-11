@@ -230,6 +230,11 @@ def _table_cells(row) -> list[str]:
 def _is_table_header(cells: list[str]) -> bool:
     labels = {"종별", "재질", "적용", "구분", "규격", "종류", "항목", "비고", "기호", "강종", "두께", "허용오차"}
     normalized = [re.sub(r"\s+", "", text) for text in cells if text]
+    if len(normalized) >= 2 and normalized[0] in {"구분", "규격", "종류"} and all(
+        re.fullmatch(r"\d+(?:\.\d+)?(?:[xX×*]\d+(?:\.\d+)?){2}(?:mm|㎜)?", cell)
+        for cell in normalized[1:]
+    ):
+        return True
     return len(normalized) >= 2 and sum(text in labels for text in normalized) >= 2 and not any(re.search(r"\d", text) for text in normalized)
 
 
@@ -335,7 +340,8 @@ def _split_label(text: str) -> tuple[str, str]:
 
 def _title_and_content(text: str, is_heading: bool) -> tuple[str, str]:
     colon = re.match(r"^(?P<title>.{2,60}?)\s*[:：]\s*(?P<content>\S.*)$", text)
-    if colon:
+    # A mix ratio is source content, not a title/content separator.
+    if colon and not (re.search(r"\d\s*$", colon.group("title")) and re.match(r"\d", colon.group("content"))):
         return clean_text(colon.group("title")), clean_text(colon.group("content"))
     if is_heading or (len(text) <= 90 and not SENTENCE_END_RE.search(text)):
         return text, ""

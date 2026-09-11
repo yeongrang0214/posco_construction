@@ -15,6 +15,11 @@ def own_requirement(clause: dict[str, Any]) -> str:
     content = str(clause.get("content") or "").strip()
     if content.startswith(title):
         return content
+    # Compatibility with older parsed mix-ratio clauses; do not rewrite stored
+    # Word content, clause IDs, or the review decisions attached to them.
+    if (re.search(r"(?:몰탈|모르타르|모르터|배합)[^:：]{0,40}\d\s*$", title)
+            and re.match(r"\d(?:\s*[:：]\s*\d)?\s*(?:으로|을|를|\))", content)):
+        return f"{title} : {content}"
     return f"{title} {content}".strip()
 
 
@@ -45,6 +50,9 @@ def query_text(clauses: list[dict[str, Any]], index: int) -> str:
 
 def contextual_requirement(clause: dict[str, Any]) -> str:
     own = own_requirement(clause)
+    context = "\n".join(filter(None, [clause.get("match_context"), clause.get("analysis_context")]))
+    if context:
+        return f"[원문 상위 문맥] {context}\n[현재 요구사항] {own}"
     if clause.get("source_type") == "table" and clause.get("match_context"):
         return f"[원문 표 제목·열 문맥] {clause['match_context']}\n[현재 표 행] {own}"
     if clause.get("match_context"):

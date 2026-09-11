@@ -16,8 +16,9 @@ from typing import Any, Iterator
 
 from .kcs_impact import plan_clause_impact
 from .matcher import CURRENT_MATCHER_VERSION
-from .openai_ai import coverage_source_segments
+from .openai_ai import coverage_source_segments, COVERAGE_ANALYSIS_VERSION
 from .relevance import own_requirement
+from .source_context import enrich_source_context
 
 
 KCS_DELETE_REASON = "fully_covered_by_kcs"
@@ -5076,6 +5077,17 @@ class Store:
             if not clause:
                 return None
             result = dict(clause)
+            if "|" in str(result.get("content") or ""):
+                context_rows = [dict(row) for row in connection.execute(
+                    "SELECT id, source_order, label, title, content, source_type FROM clauses "
+                    "WHERE project_id = ? AND source_order <= ? ORDER BY source_order",
+                    (project_id, result["source_order"]),
+                )]
+                enrich_source_context(context_rows)
+                derived = next((row for row in context_rows if row["id"] == clause_id), {})
+                for key in ("analysis_context", "resolved_table_cells", "table_standard_notation"):
+                    if key in derived:
+                        result[key] = derived[key]
             result["coverage_confirmed"] = bool(result["coverage_confirmed"])
             candidates = connection.execute(
                 """
@@ -5129,6 +5141,9 @@ class Store:
             result["coverage_analysis"] = None
             if coverage:
                 coverage_item = dict(coverage)
+                version_row = connection.execute("SELECT value FROM app_metadata WHERE key = ?",
+                                                 ("coverage_version:" + clause_id,)).fetchone()
+                coverage_item["analysis_version"] = version_row["value"] if version_row else ""
                 candidate_ids = json.loads(coverage_item.pop("candidate_ids_json") or "[]")
                 visible_candidate_ids = [item["id"] for item in result["candidates"][:3]]
                 if candidate_ids == visible_candidate_ids:
@@ -5647,6 +5662,7 @@ class Store:
             "posco_label": clause["label"],
             "posco_title": clause["title"],
             "posco_content": clause["content"],
+            "analysis_context": clause.get("analysis_context", ""),
             "match_context": clause.get("match_context", ""),
             "candidates": clause["candidates"][:3],
             "coverage_analysis": clause.get("coverage_analysis"),
@@ -5875,6 +5891,8 @@ class Store:
                     analyzed_at,
                 ),
             )
+            connection.execute("INSERT INTO app_metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                               ("coverage_version:" + clause_id, COVERAGE_ANALYSIS_VERSION))
             if bool(clause["coverage_confirmed"]) and not preserve_review:
                 connection.execute(
                     "UPDATE clauses SET coverage_confirmed = 0 WHERE id = ? AND project_id = ?",

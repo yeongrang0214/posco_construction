@@ -9,19 +9,19 @@ const labels = { corresponds: 'KS 대응', differs: '조건 차이 · 검토', u
 export function KsTestComparisonPanel({ projectId, clauseId, initial }: {
   projectId: string; clauseId: string; initial: KsTestComparison;
 }) {
-  const [result, setResult] = useState(initial);
+  const [response, setResponse] = useState<{ source: KsTestComparison; data: KsTestComparison } | null>(null);
+  const result = response?.source === initial ? response.data : initial;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { setResult(initial); }, [initial]);
 
   async function compare() {
     if (busy) return;
     setBusy(true); setError('');
     try {
       const { comparison } = await api.compareKsTest(projectId, clauseId);
-      if (mounted.current) setResult(comparison);
+      if (mounted.current) setResponse({ source: initial, data: comparison });
     } catch (cause) {
       if (mounted.current) setError(cause instanceof Error ? cause.message : 'KS 비교를 완료하지 못했습니다. 다시 시도해 주세요.');
     } finally { if (mounted.current) setBusy(false); }

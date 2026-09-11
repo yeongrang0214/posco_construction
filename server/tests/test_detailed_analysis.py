@@ -100,6 +100,24 @@ def test_failure_stops_until_explicit_retry_and_reuses_completed(setup):
     assert queue.status(store, project_id)["completed"] == 2
 
 
+def test_new_analysis_version_refreshes_once_without_touching_human_decision(setup):
+    store, project_id, clause_id, _, ai, worker = setup
+    with store.connect() as connection:
+        connection.execute("UPDATE clauses SET decision='delete', decision_reason='management_decision', review_note='보존' WHERE id=?", (clause_id,))
+    queue.enqueue(store, project_id)
+    asyncio.run(worker.run_one())
+    with store.connect() as connection:
+        connection.execute("UPDATE app_metadata SET value='older-version' WHERE key=?", ("coverage_version:" + clause_id,))
+    assert queue.enqueue(store, project_id, retry=True)["status"] == "queued"
+    asyncio.run(worker.run_one())
+    assert len(ai.calls) == 2
+    result = store.get_clause(project_id, clause_id)
+    assert (result["decision"], result["decision_reason"], result["review_note"]) == ("delete", "management_decision", "보존")
+    assert queue.enqueue(store, project_id, retry=True)["status"] == "completed"
+    asyncio.run(worker.run_one())
+    assert len(ai.calls) == 2
+
+
 def test_pause_finishes_inflight_without_starting_next_request(setup):
     store, project_id, _, _, ai, _ = setup
     add_clause(store, project_id, "second", 2)

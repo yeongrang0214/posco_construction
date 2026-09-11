@@ -17,13 +17,13 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
   projectId: string; clauseId: string; refreshKey: number | string; onOpenDetail: () => void;
 }) {
   const requestKey = `${projectId}:${clauseId}:${refreshKey}`;
-  const [result, setResult] = useState<{ key: string; loading: boolean; error?: string; analysis?: ClauseCoverageAnalysis | null; standardLinks?: ClauseDetail['standard_links']; ksTestComparison?: ClauseDetail['ks_test_comparison'] }>({ key: '', loading: true });
+  const [result, setResult] = useState<{ key: string; loading: boolean; error?: string; analysis?: ClauseCoverageAnalysis | null; sourceContext?: string; standardLinks?: ClauseDetail['standard_links']; ksTestComparison?: ClauseDetail['ks_test_comparison'] }>({ key: '', loading: true });
   const state: typeof result = result.key === requestKey ? result : { key: requestKey, loading: true };
   useEffect(() => {
     let active = true;
     // Paid work belongs to the durable document queue; this panel only reads saved results.
     api.clause(projectId, clauseId).then(({ clause }) => {
-      if (active) setResult({ key: requestKey, loading: false, analysis: clause.coverage_analysis, standardLinks: clause.standard_links, ksTestComparison: clause.ks_test_comparison });
+      if (active) setResult({ key: requestKey, loading: false, analysis: clause.coverage_analysis, sourceContext: clause.analysis_context, standardLinks: clause.standard_links, ksTestComparison: clause.ks_test_comparison });
     }).catch(() => {
       if (active) setResult({ key: requestKey, loading: false, error: '저장된 GPT 검증 결과를 불러오지 못했습니다.' });
     });
@@ -33,7 +33,7 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
   return <section className="mb-3 rounded-lg border border-primary/25 bg-primary/5 p-3 text-sm leading-6" aria-label="GPT 전체 요구사항 검증" aria-live="polite">
     <div className="flex items-start justify-between gap-2">
       <div>
-        <p className="font-semibold">{state.loading ? 'GPT 검증 상태 확인 중…' : state.error || (state.analysis ? labels[state.analysis.coverage_status] : 'GPT 전체 요구사항 검증 전')}</p>
+        <p className="font-semibold">{state.loading ? 'GPT 검증 상태 확인 중…' : state.error || (state.analysis ? (state.analysis.coverage_status === 'fully_covered' && !state.analysis.deletion_safe ? 'GPT: 대응 본문 있음 · 수치·조건 추가 확인' : labels[state.analysis.coverage_status]) : 'GPT 전체 요구사항 검증 전')}</p>
         <p className="mt-1 text-muted-foreground">검색 점수·의미 대응과 전체 포괄은 다릅니다. 최종 남김·삭제는 담당자가 결정합니다.</p>
       </div>
       <Button size="sm" variant="outline" onClick={onOpenDetail}>검증 상세</Button>
@@ -57,6 +57,7 @@ export function CoverageStatusPanel({ projectId, clauseId, refreshKey, onOpenDet
     {!state.loading && state.analysis && <details className="mt-2">
       <summary className="cursor-pointer font-medium">검증 근거 · 원문 {state.analysis.requirements.length}구간</summary>
       <p className="mt-2 whitespace-pre-wrap">{state.analysis.rationale}</p>
+      {state.sourceContext && <p className="mt-2 whitespace-pre-wrap text-muted-foreground">표 문맥 해석 · 원문과 담당자 판정은 변경하지 않습니다.<br />{state.sourceContext}</p>}
       <ul className="mt-2 space-y-2">
         {state.analysis.requirements.map((requirement, index) => <li key={index} className="border-l-2 border-border pl-2">
           <p>{requirement.status === 'covered' ? '대응' : requirement.status === 'conflict' ? '충돌' : requirement.status === 'uncertain' ? '확인 필요' : '미포괄'} · {requirement.requirement}</p>

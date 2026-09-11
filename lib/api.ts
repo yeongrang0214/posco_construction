@@ -315,6 +315,7 @@ export interface RelatedReferences {
 }
 
 export interface ClauseDetail extends ClauseSummary {
+  analysis_context?: string;
   project_id: string;
   content: string;
   outline_level: number | null;

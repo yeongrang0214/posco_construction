@@ -12,6 +12,7 @@ from typing import Any, Sequence
 import httpx
 
 from .config import Settings
+from .text_analysis import analyze_text_differences
 from .relevance import evidence_present, verification_body, named_mortar_mismatch
 from .standard_links import STANDARD_COMPARISON_RULES, STANDARD_LINK_VERSION, standard_links, indirect_standard_links
 
@@ -39,6 +40,7 @@ MAX_COVERAGE_CANDIDATE_CHARS = 8_000
 MAX_COVERAGE_CANDIDATE_PACK_CHARS = 48_000
 MAX_COVERAGE_CALLS = 64
 DEFAULT_EMBEDDING_CACHE_ENTRIES = 8_000
+COVERAGE_ANALYSIS_VERSION = "coverage-v3-masonry-context"
 
 
 def _coverage_source_pieces(text: str) -> tuple[tuple[str, bool], ...]:
@@ -696,6 +698,14 @@ class OpenAIClient:
                     "빈 문자열이다. 하나의 후보가 원문 전체를 포괄하면 다른 후보가 일부만 대응해도 "
                     "그 이유로 원문을 남기지 않는다. 미포괄·충돌·불확실 구간이 있을 때만 해당 내용을 "
                     "residual_content에 보존하고, 판정 설명이나 검토 메모는 rationale에만 쓴다. "
+                    "한 원문 구간에 쉼표·하고·하며로 연결된 복수 요구가 있으면 각각의 대상, 행위, "
+                    "수치, 단위, 방향(수평/수직), 빈도, 조건을 내부 점검한다. 모두 확인되어야 그 구간을 "
+                    "covered로 한다. 90cm=900mm처럼 단위 환산은 가능하지만 수평과 수직 조건을 바꾸어 "
+                    "대입하지 않는다. 17켜와 18켜는 높이가 같아도 다른 조건이다. 표의 상동·따옴표는 "
+                    "제공된 같은 표의 열별 참조 문맥으로 해석하며 빈 셀을 임의로 채우지 않는다. "
+                    "'공사시방서에 따른다'는 포스코 시방서의 치수·형상·빈도를 대신 입증하지 못한다. "
+                    "간접 참조 조항의 제목과 적용 대상이 불일치하거나 참조 원문이 없으면 uncertain이다. "
+                    "미확인 세부 요구는 잔여문구에서 생략하지 말고 원문을 보존한다. "
                 ),
                 "input": (
                     f"{context_section}[판정 대상 포스코 원문 구간]\n{segmented_posco_text}"
@@ -839,6 +849,21 @@ class OpenAIClient:
             coverage_status = "conflict" if any(r["status"] == "conflict" for r in requirements) else "uncertain"
             residual_content = "\n".join(text for _, text in source_segments)
             rationale = "대응 KCS 조항과 KS 적용 범위의 연계를 확인했습니다. 간접 참조이므로 세부 조건의 전체 대체는 추가 확인이 필요합니다."
+        numeric_guarded = False
+        for requirement in requirements:
+            if requirement["status"] != "covered":
+                continue
+            evidence_text = "\n".join(text for reference_id, _, text in candidate_chunks
+                                      if reference_id in requirement["evidence_candidate_ids"])
+            differences = analyze_text_differences(requirement["requirement"], evidence_text)["differences"]
+            if any(d["category"] == "quantity" for d in differences):
+                requirement["status"] = "uncertain"
+                requirement["evidence"] = "원문 수치·단위 중 대응 본문에서 확인되지 않은 조건이 있습니다. " + requirement["evidence"]
+                numeric_guarded = True
+        if numeric_guarded:
+            coverage_status = "conflict" if any(r["status"] == "conflict" for r in requirements) else "uncertain"
+            residual_content = "\n".join(text for _, text in source_segments)
+            rationale += " 원문 수치의 전체 대응이 검증되지 않아 전체 대응으로 확정하지 않았습니다."
         return CoverageAnalysis(
             coverage_status=coverage_status,
             confidence=confidence,

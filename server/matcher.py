@@ -15,6 +15,7 @@ from . import text_analysis
 from .relevance import apply_verdicts, clearly_unrelated, own_requirement, query_text, contextual_requirement, masonry_material_conflict
 from .table_evidence import table_candidates
 from .standard_links import standard_links
+from .source_context import enrich_source_context
 from .kcs_sync import (
     catalog_revision,
     raw_section_is_usable,
@@ -25,7 +26,7 @@ from .kcs_sync import (
 from .openai_ai import OpenAIAPIError, OpenAIClient
 
 
-CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.5-ks-scope-link"
+CURRENT_MATCHER_VERSION = "hybrid-kcs-v5.6-masonry-recall"
 
 
 CHAPTER_SCOPES: dict[int, tuple[tuple[str, ...], str]] = {
@@ -57,6 +58,11 @@ STOPWORDS = {
     "그리고", "또는", "위하여", "필요", "적용", "기준", "해당",
 }
 TERM_EQUIVALENT_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("몰탈", "모르타르", "모르터"),
+    ("줄파기", "줄눈파기", "줄눈 파기"),
+    ("눌러두", "줄눈누르기", "줄눈 누르기"),
+    ("1일쌓기", "하루쌓기", "하루의 쌓기", "1일의 쌓기"),
+    ("사춤", "충진", "충전"),
     ("내화몰탈", "내화 모르타르", "내화 모르터", "refractory mortar"),
     ("공작도", "철골제작도", "제작도", "시공상세도", "shop drawing", "shopdrawing"),
     ("철골세우기", "철골 설치", "강구조 설치", "steel erection", "erection"),
@@ -807,6 +813,14 @@ def _rank_matches(
         if not _empty_scope_error(exc):
             raise
         scoped = []
+    masonry_query = bool(re.search(r"벽돌|블록|조적", text)) and any(
+        _code_digits(prefix).startswith("4134") for prefix in prefixes
+    )
+    if masonry_query:
+        # BM25/TF-IDF and catalog cosine are not the same scale. Mixing the raw
+        # values let generic concrete/plaster documents swamp masonry evidence.
+        scoped = [(section, _stable_section_score(text, section, ("4134",))) for section, _ in scoped]
+        scoped.sort(key=lambda item: (-item[1], _section_key(item[0])))
     referenced_codes = _referenced_kcs_codes(text)
     visible_scoped = [score for _, score in scoped if score >= 0.25]
     scoped_is_weak = (
@@ -815,10 +829,51 @@ def _rank_matches(
         or not scoped
         or scoped[0][1] < 0.45
     )
-    if not scoped_is_weak and not referenced_codes and not _matched_equivalent_groups(text):
+    if not scoped_is_weak and not referenced_codes and not _matched_equivalent_groups(text) and not masonry_query:
         return scoped[:limit]
 
     ranked_groups: list[tuple[str, list[tuple[dict[str, Any], float]]]] = [("scoped", scoped)]
+    if masonry_query:
+        # Rank the operative requirement in the BODY, not repeated product names
+        # in document headings. Each pair is a construction concept, not a gold
+        # clause ID; the normal semantic verifier still rejects false positives.
+        concepts = (
+            (r"통줄눈", r"통줄눈"),
+            (r"연결재|공간벽", r"연결철물|연결재|고정철물|수평방향.*수직방향"),
+            (r"하루|1\s*일", r"하루.*쌓기|1일.*쌓기|하루의쌓기"),
+            (r"줄파기|줄눈파기|눌러두", r"줄눈파기|줄눈누르기"),
+            (r"소석회", r"소석회"),
+            (r"수직.*수평|수평.*수직|요철", r"수평.*수직|수직.*수평|턱솔"),
+            (r"충진|충전|충분.*몰탈|몰탈.*충분", r"모르타르.*(?:발라|채워|채운|다져)"),
+            (r"세로근|보강근", r"세로근.*정착|정착.*세로근"),
+        )
+        compact = re.sub(r"\s+", "", text)
+        active_concepts = [target for source, target in concepts if re.search(source.replace(r"\s*", ""), compact)]
+        focused = []
+        if active_concepts:
+            for section in load_kcs_sections(str(raw_dir), ("4134",)):
+                body = re.sub(r"\s+", "", section["content"])
+                if body == re.sub(r"\s+", "", section["title"]):
+                    continue
+                hits = sum(bool(re.search(target, body)) for target in active_concepts)
+                if hits:
+                    score = _stable_section_score(text, section, ("4134",)) + .24 * hits / len(active_concepts)
+                    focused.append((section, min(.85, score)))
+            focused.sort(key=lambda item: (-item[1], _section_key(item[0])))
+            focused = [({**section, "_operation_recovery": True}, score) for section, score in focused[:6]]
+            ranked_groups.append(("focused", focused))
+        # Recover short operations independently of repeated material names in
+        # a long source paragraph. This is candidate retrieval, not equivalence.
+        probes = [word for word in ("통줄눈", "줄눈파기", "줄파기", "소석회", "수평", "정착", "쌓기 높이")
+                  if word in expand_equivalent_terms(text)]
+        if re.search(r"하루|1\s*일|7\s*켜", text):
+            probes.append("하루 쌓기 높이")
+        if re.search(r"연결재|공간벽", text):
+            probes.append("공간쌓기 연결 철물 수평 수직")
+        for probe in probes[:4]:
+            recovered = _rank_lexical(probe, raw_dir, ("4134",), 8)
+            ranked_groups.append(("scoped", [(section, _stable_section_score(text, section, ("4134",)))
+                                            for section, _ in recovered]))
 
     equivalent_ranked = _rank_equivalent_sections(text, raw_dir, prefixes)
     if equivalent_ranked:
@@ -874,6 +929,7 @@ def _rank_matches(
         "keyword": 1.35,
         "global": 1.0,
         "explicit": 2.5,
+        "focused": 2.0,
     }
     for source, group in ranked_groups:
         for rank, (section, score) in enumerate(group, start=1):
@@ -891,9 +947,9 @@ def _rank_matches(
             )
             entry["priority"] += source_weights[source] / (RRF_K + rank)
             if source == "scoped":
-                entry["score"] = score
+                entry["score"] = max(entry["score"], score) if masonry_query else score
                 entry["has_scoped_score"] = True
-            elif not entry["has_scoped_score"] and entry["score"] < score:
+            elif (source == "focused" or not entry["has_scoped_score"]) and entry["score"] < score:
                 entry["score"] = score
             if section.get("_explicit_reference"):
                 entry["explicit"] = True
@@ -902,6 +958,8 @@ def _rank_matches(
                 entry["keyword"] = True
             if source == "equivalent":
                 entry["section"]["_equivalent_scope"] = True
+            if source == "focused":
+                entry["section"] = {**entry["section"], "_operation_recovery": True}
 
     maximum_priority = max((entry["priority"] for entry in merged.values()), default=1.0)
     combined: list[tuple[dict[str, Any], float]] = []
@@ -912,7 +970,13 @@ def _rank_matches(
             section["_explicit_reference"] = True
         if entry["keyword"]:
             section["_keyword_scope"] = True
-        combined.append((section, entry["score"]))
+        relevance = entry["score"]
+        if masonry_query and not _code_digits(section["code"]).startswith("4134") and not entry["explicit"]:
+            # Related trades remain searchable, but a mention of concrete or
+            # mortar alone must not outrank an actual masonry requirement.
+            if not re.search(r"배관|방수|미장|도장|단열|철골", text):
+                relevance *= 0.65
+        combined.append((section, relevance))
     combined.sort(
         key=lambda item: (
             -(
@@ -925,7 +989,8 @@ def _rank_matches(
             _section_key(item[0]),
         )
     )
-    return combined[:limit]
+    operation_rows = [item for item in combined if item[0].get("_operation_recovery")]
+    return (operation_rows + [item for item in combined if not item[0].get("_operation_recovery")])[:limit]
 
 
 def clear_matcher_caches() -> None:
@@ -1074,6 +1139,12 @@ def _candidate_rows(
             reserved_codes.add(code)
             reserved.append(item)
     reserved_keys = {_section_key(item[0]) for item in reserved}
+    # A long paragraph may need several different KCS operations. Reserve a
+    # bounded verification quota before generic material clauses fill the pool.
+    for item in ranked:
+        if item[0].get("_operation_recovery") and _section_key(item[0]) not in reserved_keys:
+            reserved.append(item)
+            reserved_keys.add(_section_key(item[0]))
     ordered = [*reserved, *(item for item in ranked if _section_key(item[0]) not in reserved_keys)]
 
     for section, score, semantic_score in ordered:
@@ -1167,6 +1238,7 @@ def match_clauses(
             "엄격 재매칭에는 사용 가능한 OpenAI 임베딩이 필요합니다."
         )
 
+    enrich_source_context(clauses)
     prepared: list[
         tuple[dict[str, Any], str, list[tuple[dict[str, Any], float]]]
     ] = []
@@ -1238,7 +1310,9 @@ def match_clauses(
             )
         can_verify = callable(getattr(ai_client, "verify_candidate_groups", None)) and getattr(ai_client, "available", False) and getattr(ai_client, "embeddings_available", True)
         staged_candidates.append((clause, _candidate_rows(
-            clause, source_text, ranked, limit=6, min_relevance=0.1 if can_verify else 0.25,
+            clause, source_text, ranked,
+            limit=12 if can_verify and re.search(r"벽돌|블록|조적", source_text) else 6,
+            min_relevance=0.1 if can_verify else 0.25,
         )))
 
     verifier = getattr(ai_client, "verify_candidate_groups", None)

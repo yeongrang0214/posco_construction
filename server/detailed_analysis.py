@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from .openai_ai import COVERAGE_ANALYSIS_VERSION
 
 PREFIX = "detailed_analysis:"
 ACTIVE = {"queued", "running"}
@@ -25,9 +26,10 @@ def _write(connection, job):
 
 def _counts(connection, project_id):
     return dict(connection.execute(
-        """SELECT COUNT(*) AS total, COUNT(a.clause_id) AS completed
+        """SELECT COUNT(*) AS total, COUNT(CASE WHEN v.value = ? THEN a.clause_id END) AS completed
            FROM clauses c LEFT JOIN clause_coverage_analysis a ON a.clause_id = c.id
-           WHERE c.project_id = ? AND c.source_type != 'heading'""", (project_id,),
+           LEFT JOIN app_metadata v ON v.key = 'coverage_version:' || c.id
+           WHERE c.project_id = ? AND c.source_type != 'heading'""", (COVERAGE_ANALYSIS_VERSION, project_id),
     ).fetchone())
 
 
