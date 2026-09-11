@@ -126,3 +126,16 @@ def test_ambiguous_floating_rows_are_not_guessed():
                         "left": 0, "right": 500, "top": 80 + start, "bottom": 85 + start} for start in (0, 6)]
     result = preview.map_clauses({"pages": [p]}, [clause("h", 1, "현장품질검사"), clause("a", 2, "내화벽돌 | 2개")])
     assert result["items"][1]["status"] == "unmapped"
+
+
+def test_paragraphs_before_floating_table_recover_only_unused_exact_text():
+    p = page("보강재를 사용한다 사춤재를 채운다 제품시험 나비80120 시험기준")
+    start = len(preview.normalized("보강재를 사용한다 사춤재를 채운다 제품시험"))
+    end = start + len(preview.normalized("나비80120"))
+    p["table_rows"] = [{"text": "나비80120", "start": start, "end": end,
+                        "left": 0, "right": 500, "top": 150, "bottom": 175}]
+    clauses = [clause("a", 1, "보강재를 사용한다"), clause("t", 2, "나비 | 80 | 120"),
+               clause("b", 3, "사춤재를 채운다"), clause("c", 4, "제품시험"),
+               clause("d", 5, "제품시험"), clause("e", 6, "시험기준")]
+    result = preview.map_clauses({"pages": [p]}, clauses)
+    assert [r["status"] for r in result["items"]] == ["exact", "table_row", "exact", "exact", "unmapped", "exact"]

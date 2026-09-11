@@ -174,6 +174,8 @@ def map_clauses(index: dict, clauses: list[dict]) -> dict:
     text = "".join(char[1] for char in characters)
     cursor = 0
     used_table_spans = []
+    used_spans = []
+    table_gaps = []
     items = []
     for clause in sorted(clauses, key=lambda row: row["source_order"]):
         title = str(clause.get("title") or "").removesuffix("…")
@@ -193,7 +195,10 @@ def map_clauses(index: dict, clauses: list[dict]) -> dict:
                 row = min(rows, key=lambda r: (r["start"], r["bottom"] - r["top"]))
                 items.append({"id": clause["id"], "status": "table_row", "boxes": [
                     {k: row[k] for k in ("page", "left", "top", "right", "bottom")} ]})
+                if row["start"] > cursor:
+                    table_gaps.append((cursor, row["start"], row["page"]))
                 used_table_spans.append((row["start"], row["end"]))
+                used_spans.append((row["start"], row["end"]))
                 cursor = max(cursor, row["end"])
                 continue
         identifiers = grades(content) if clause.get("source_type") == "table" else set()
@@ -211,6 +216,7 @@ def map_clauses(index: dict, clauses: list[dict]) -> dict:
                     row = min(rows, key=lambda r: r["bottom"] - r["top"])
                     box = {k: v for k, v in row.items() if k != "grade"}
                     items.append({"id": clause["id"], "status": "table_row", "boxes": [{"page": page_number, **box}]})
+                    used_spans.append((start, start + len(target)))
                     cursor = start + len(target)
                     continue
         whole = content if normalized(content).startswith(normalized(title)) else f"{title} {content}"
@@ -223,6 +229,27 @@ def map_clauses(index: dict, clauses: list[dict]) -> dict:
             if start >= 0:
                 spans = [(start, start + len(target))]
                 break
+        if not spans and cursor and "|" not in content:
+            # LibreOffice may place a floating table after its following paragraphs.
+            # Recover only whole exact text from the gap skipped by that table,
+            # on the same page, without reusing an already highlighted occurrence.
+            for target in choices:
+                if len(target) < 4:
+                    continue
+                matches = set()
+                for gap_start, gap_end, page_number in table_gaps:
+                    if page_number != characters[cursor - 1][0]:
+                        continue
+                    start = text.find(target, gap_start, gap_end)
+                    while start >= 0:
+                        end = start + len(target)
+                        if (characters[start][0] == characters[end - 1][0] == page_number
+                            and not any(start < used_end and end > used_start for used_start, used_end in used_spans)):
+                            matches.add((start, end))
+                        start = text.find(target, start + 1, gap_end)
+                if len(matches) == 1:
+                    spans = list(matches)
+                    break
         if not spans:
             # A table/header can interrupt a multi-sentence Word paragraph. Require
             # every sentence to match exactly; never highlight the intervening text.
@@ -247,7 +274,8 @@ def map_clauses(index: dict, clauses: list[dict]) -> dict:
                     previous["bottom"] = max(previous["bottom"], bottom)
                 else:
                     boxes.append({"page": page, "left": x0, "top": top, "right": x1, "bottom": bottom})
-            cursor = end
+            used_spans.append((start, end))
+            cursor = max(cursor, end)
         items.append({"id": clause["id"], "status": "exact" if boxes else "unmapped", "boxes": boxes})
     return {
         "status": "ready",
